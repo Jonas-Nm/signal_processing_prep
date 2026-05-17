@@ -32,6 +32,7 @@ signal_processing_prep/
 |       |-- __init__.py
 |       |-- config.py
 |       |-- data_loading.py
+|       |-- records.py
 |       |-- synthetic.py
 |       |-- quality.py
 |       |-- preprocessing.py
@@ -44,6 +45,7 @@ signal_processing_prep/
 |       |-- reporting.py
 |       `-- pipeline.py
 `-- tests/
+    |-- test_records.py
     |-- test_data_loading.py
     |-- test_synthetic.py
     |-- test_frequency_domain.py
@@ -55,6 +57,7 @@ signal_processing_prep/
 
 - `config.py`: load and validate YAML configuration into typed structures.
 - `data_loading.py`: load CSV, TXT, NPY, and WAV files into a shared signal record model.
+- `records.py`: define shared dataclasses such as `SignalRecord`.
 - `synthetic.py`: generate example signals for demos and tests.
 - `quality.py`: check duration, missing values, clipping, scaling, and stationarity indicators.
 - `preprocessing.py`: provide optional filtering and windowing utilities.
