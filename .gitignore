@@ -26,11 +26,13 @@ htmlcov/
 .env.*
 
 # Project data and generated reports
-data/raw/
-data/interim/
-data/processed/
-reports/figures/
-reports/summaries/
+data/raw/*
+data/interim/*
+data/processed/*
+reports/figures/*
+reports/summaries/*
+!reports/figures/.gitkeep
+!reports/summaries/.gitkeep
 
 # Editor and OS files
 .vscode/
