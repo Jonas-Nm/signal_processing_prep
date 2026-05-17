@@ -48,6 +48,7 @@ signal_processing_prep/
     |-- test_records.py
     |-- test_data_loading.py
     |-- test_synthetic.py
+    |-- test_plotting.py
     |-- test_frequency_domain.py
     |-- test_features.py
     `-- test_pipeline.py
@@ -126,6 +127,19 @@ Acceptance criteria:
 
 - Small local test files load correctly.
 - Missing labels and variable lengths are handled explicitly.
+
+## Phase 3.5: Synthetic Data Visualization
+
+- Pull a small subset of plotting forward so loaded and synthetic signals can be inspected before the full plotting/reporting phase.
+- Add time-domain plotting for one `SignalRecord`, including optional start time, duration, and explicit opt-in downsampling for long sequences.
+- Add an interactive time-domain navigator using matplotlib widgets with previous/next controls and a time-window slider.
+- Keep this limited to raw time-series visualization; FFT, PSD, spectrograms, feature plots, and report export remain in later phases.
+
+Acceptance criteria:
+
+- Synthetic and loaded records can be visualized without notebook-specific code.
+- Interactive navigation works with standard matplotlib interactive backends.
+- Plotting functions are covered by non-GUI tests using a headless backend.
 
 ## Phase 4: DSP Foundations
 

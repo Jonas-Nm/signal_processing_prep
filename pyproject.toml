@@ -22,6 +22,10 @@ dependencies = [
 dev = [
     "pytest",
 ]
+notebook = [
+    "ipykernel",
+    "ipympl",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

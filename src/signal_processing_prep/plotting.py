@@ -1,0 +1,252 @@
+"""Plotting helpers for signal exploration."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from matplotlib.widgets import Button, Slider
+
+from signal_processing_prep.records import SignalRecord
+
+
+def plot_time_signal(
+    record: SignalRecord,
+    *,
+    start_seconds: float | None = None,
+    duration_seconds: float | None = None,
+    max_points: int | None = None,
+    downsample_method: str = "envelope",
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot one signal record in the time domain."""
+    time, values = _windowed_data(
+        record,
+        start_seconds=start_seconds,
+        duration_seconds=duration_seconds,
+        max_points=max_points,
+        downsample_method=downsample_method,
+    )
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 4))
+    else:
+        fig = ax.figure
+
+    ax.plot(time, values, linewidth=1.0, label=record.label or record.name or "signal")
+    ax.set_title(_time_plot_title(record, start_seconds, duration_seconds))
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Amplitude")
+    ax.grid(True, alpha=0.3)
+    if record.label is not None:
+        ax.legend(loc="best")
+    fig.tight_layout()
+
+    if show:
+        plt.show()
+    return fig, ax
+
+
+@dataclass
+class TimeSignalNavigator:
+    """Interactive matplotlib controls for exploring one time-domain signal."""
+
+    record: SignalRecord
+    fig: Figure
+    ax: Axes
+    slider: Slider
+    previous_button: Button
+    next_button: Button
+    window_seconds: float
+    max_points: int | None
+    downsample_method: str
+    line: object
+
+    def set_start_seconds(self, start_seconds: float) -> None:
+        """Move the visible window to a new start time."""
+        start = _clamp_start(start_seconds, self.record.duration_seconds, self.window_seconds)
+        self.slider.set_val(start)
+
+    def step_previous(self, _event: object | None = None) -> None:
+        """Move the visible window one window length backward."""
+        self.set_start_seconds(float(self.slider.val) - self.window_seconds)
+
+    def step_next(self, _event: object | None = None) -> None:
+        """Move the visible window one window length forward."""
+        self.set_start_seconds(float(self.slider.val) + self.window_seconds)
+
+    def _update(self, start_seconds: float) -> None:
+        time, values = _windowed_data(
+            self.record,
+            start_seconds=start_seconds,
+            duration_seconds=self.window_seconds,
+            max_points=self.max_points,
+            downsample_method=self.downsample_method,
+        )
+        self.line.set_data(time, values)
+        self.ax.set_xlim(time[0], time[-1])
+        if values.size > 0:
+            y_min = float(np.nanmin(values))
+            y_max = float(np.nanmax(values))
+            padding = max((y_max - y_min) * 0.05, 1e-9)
+            self.ax.set_ylim(y_min - padding, y_max + padding)
+        self.fig.canvas.draw_idle()
+
+
+def plot_time_signal_navigator(
+    record: SignalRecord,
+    *,
+    window_seconds: float = 1.0,
+    start_seconds: float = 0.0,
+    max_points: int | None = None,
+    downsample_method: str = "envelope",
+    show: bool = False,
+) -> TimeSignalNavigator:
+    """Create an interactive time-domain navigator for one signal record."""
+    if window_seconds <= 0:
+        raise ValueError("window_seconds must be positive.")
+    if max_points is not None and max_points <= 0:
+        raise ValueError("max_points must be positive.")
+
+    window_seconds = min(window_seconds, record.duration_seconds)
+    start_seconds = _clamp_start(start_seconds, record.duration_seconds, window_seconds)
+    time, values = _windowed_data(
+        record,
+        start_seconds=start_seconds,
+        duration_seconds=window_seconds,
+        max_points=max_points,
+        downsample_method=downsample_method,
+    )
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    plt.subplots_adjust(bottom=0.25)
+    (line,) = ax.plot(time, values, linewidth=1.0)
+    ax.set_title(f"{record.name or 'Signal'} - interactive time navigator")
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Amplitude")
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(time[0], time[-1])
+
+    slider_ax = fig.add_axes([0.18, 0.10, 0.64, 0.03])
+    previous_ax = fig.add_axes([0.18, 0.04, 0.12, 0.04])
+    next_ax = fig.add_axes([0.70, 0.04, 0.12, 0.04])
+
+    max_start = max(record.duration_seconds - window_seconds, 0.0)
+    slider = Slider(
+        ax=slider_ax,
+        label="Start [s]",
+        valmin=0.0,
+        valmax=max_start,
+        valinit=start_seconds,
+    )
+    previous_button = Button(previous_ax, "Previous")
+    next_button = Button(next_ax, "Next")
+
+    navigator = TimeSignalNavigator(
+        record=record,
+        fig=fig,
+        ax=ax,
+        slider=slider,
+        previous_button=previous_button,
+        next_button=next_button,
+        window_seconds=window_seconds,
+        max_points=max_points,
+        downsample_method=downsample_method,
+        line=line,
+    )
+    slider.on_changed(navigator._update)
+    previous_button.on_clicked(navigator.step_previous)
+    next_button.on_clicked(navigator.step_next)
+
+    if show:
+        plt.show()
+    return navigator
+
+
+def _time_plot_title(
+    record: SignalRecord,
+    start_seconds: float | None,
+    duration_seconds: float | None,
+) -> str:
+    title = record.name or "Signal"
+    if record.label is not None:
+        title = f"{title} ({record.label})"
+    title = f"{title} - {record.sampling_rate_hz:g} Hz"
+    if start_seconds is not None or duration_seconds is not None:
+        start = 0.0 if start_seconds is None else start_seconds
+        title = f"{title}, window from {start:g} s"
+    return title
+
+
+def _windowed_data(
+    record: SignalRecord,
+    *,
+    start_seconds: float | None,
+    duration_seconds: float | None,
+    max_points: int | None,
+    downsample_method: str = "envelope",
+) -> tuple[np.ndarray, np.ndarray]:
+    if max_points is not None and max_points <= 0:
+        raise ValueError("max_points must be positive.")
+
+    start_index = 0 if start_seconds is None else _seconds_to_index(record, start_seconds)
+    if duration_seconds is None:
+        end_index = record.n_samples
+    else:
+        if duration_seconds <= 0:
+            raise ValueError("duration_seconds must be positive.")
+        end_index = start_index + max(1, int(round(duration_seconds * record.sampling_rate_hz)))
+    end_index = min(max(end_index, start_index + 1), record.n_samples)
+
+    time = record.time_seconds[start_index:end_index]
+    values = record.values[start_index:end_index]
+    if max_points is None:
+        return time, values
+    return _downsample_for_plot(time, values, max_points, method=downsample_method)
+
+
+def _downsample_for_plot(
+    time: np.ndarray,
+    values: np.ndarray,
+    max_points: int,
+    *,
+    method: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    if values.size <= max_points:
+        return time, values
+    if method == "stride":
+        stride = max(1, int(np.ceil(values.size / max_points)))
+        return time[::stride], values[::stride]
+    if method != "envelope":
+        raise ValueError("downsample_method must be 'envelope' or 'stride'.")
+
+    n_bins = max(1, max_points // 2)
+    edges = np.linspace(0, values.size, n_bins + 1, dtype=int)
+    plot_time: list[float] = []
+    plot_values: list[float] = []
+    for start, end in zip(edges[:-1], edges[1:]):
+        if end <= start:
+            continue
+        segment = values[start:end]
+        segment_time = time[start:end]
+        min_index = int(np.nanargmin(segment))
+        max_index = int(np.nanargmax(segment))
+        for index in sorted({min_index, max_index}):
+            plot_time.append(float(segment_time[index]))
+            plot_values.append(float(segment[index]))
+
+    return np.asarray(plot_time), np.asarray(plot_values)
+
+
+def _seconds_to_index(record: SignalRecord, seconds: float) -> int:
+    if seconds < 0:
+        raise ValueError("start_seconds must be non-negative.")
+    index = int(round(seconds * record.sampling_rate_hz))
+    return min(index, record.n_samples - 1)
+
+
+def _clamp_start(start_seconds: float, duration_seconds: float, window_seconds: float) -> float:
+    return min(max(start_seconds, 0.0), max(duration_seconds - window_seconds, 0.0))
