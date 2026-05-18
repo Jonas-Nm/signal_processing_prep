@@ -211,3 +211,11 @@ def make_synthetic_dataset() -> list[SignalRecord]:
         clipped_signal(),
         transient_burst(),
     ]
+
+
+# create a main function for testing
+
+if __name__ == "__main__":
+    time = _time_axis(duration_seconds=2.0, sampling_rate_hz=1000.0)
+    print(time[:10])
+    
