@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -201,6 +203,186 @@ def transient_burst(
     )
 
 
+def window_signal(
+    *,
+    duration_seconds: float = 1.0,
+    sampling_rate_hz: float = 1000.0,
+    window_start_seconds: float = 0.0,
+    window_duration_seconds: float | None = None,
+    window_type: str = "rectangular",
+    amplitude: float = 1.0,
+    label: str | None = "window",
+    name: str | None = None,
+) -> SignalRecord:
+    """Generate a window embedded in a zero-valued signal record.
+
+    Supported window types are ``rectangular``, ``hann``, ``hamming``,
+    ``blackman``, and ``bartlett``. ``duration_seconds`` is the total record
+    duration; ``window_start_seconds`` and ``window_duration_seconds`` define
+    where the active window lies inside that record.
+    """
+    if amplitude < 0:
+        raise ValueError("amplitude must be non-negative.")
+    if window_start_seconds < 0:
+        raise ValueError("window_start_seconds must be non-negative.")
+
+    time = _time_axis(duration_seconds, sampling_rate_hz)
+    if window_duration_seconds is None:
+        window_duration_seconds = duration_seconds - window_start_seconds
+    if window_duration_seconds <= 0:
+        raise ValueError("window_duration_seconds must be positive.")
+    if window_start_seconds + window_duration_seconds > duration_seconds:
+        raise ValueError("Window must fit within duration_seconds.")
+
+    start_index = int(round(window_start_seconds * sampling_rate_hz))
+    end_index = int(round((window_start_seconds + window_duration_seconds) * sampling_rate_hz))
+    start_index = min(start_index, time.size)
+    end_index = min(max(end_index, start_index), time.size)
+    window_size = end_index - start_index
+    if window_size <= 0:
+        raise ValueError("Window parameters produce no active samples.")
+
+    window_type = window_type.lower()
+    if window_type in {"rectangular", "rectangle", "boxcar"}:
+        window_values = np.ones(window_size, dtype=np.float64)
+        canonical_type = "rectangular"
+    elif window_type == "hann":
+        window_values = np.hanning(window_size)
+        canonical_type = "hann"
+    elif window_type == "hamming":
+        window_values = np.hamming(window_size)
+        canonical_type = "hamming"
+    elif window_type == "blackman":
+        window_values = np.blackman(window_size)
+        canonical_type = "blackman"
+    elif window_type == "bartlett":
+        window_values = np.bartlett(window_size)
+        canonical_type = "bartlett"
+    else:
+        raise ValueError(
+            "window_type must be one of 'rectangular', 'hann', 'hamming', "
+            "'blackman', or 'bartlett'."
+        )
+
+    values = np.zeros(time.size, dtype=np.float64)
+    values[start_index:end_index] = amplitude * window_values
+    return SignalRecord(
+        values,
+        sampling_rate_hz,
+        label=label,
+        name=name or f"{canonical_type}_window",
+        metadata={
+            "window_type": canonical_type,
+            "window_start_seconds": window_start_seconds,
+            "window_duration_seconds": window_duration_seconds,
+            "amplitude": amplitude,
+        },
+    )
+
+
+def sinc_signal(
+    *,
+    duration_seconds: float = 1.0,
+    sampling_rate_hz: float = 1000.0,
+    bandwidth_hz: float = 50.0,
+    center_seconds: float | None = None,
+    amplitude: float = 1.0,
+    label: str | None = "sinc",
+    name: str | None = "sinc_signal",
+) -> SignalRecord:
+    """Generate a normalized sinc signal centered in time by default.
+
+    The generated values follow ``amplitude * sinc(2 * bandwidth_hz * t)``,
+    where ``t`` is measured relative to ``center_seconds``.
+    """
+    if bandwidth_hz <= 0:
+        raise ValueError("bandwidth_hz must be positive.")
+
+    time = _time_axis(duration_seconds, sampling_rate_hz)
+    if center_seconds is None:
+        center_seconds = 0.5 * (time[0] + time[-1])
+    if center_seconds < 0 or center_seconds > duration_seconds:
+        raise ValueError("center_seconds must be within the signal duration.")
+
+    centered_time = time - center_seconds
+    values = amplitude * np.sinc(2.0 * bandwidth_hz * centered_time)
+    return SignalRecord(
+        values,
+        sampling_rate_hz,
+        label=label,
+        name=name,
+        metadata={
+            "bandwidth_hz": bandwidth_hz,
+            "center_seconds": center_seconds,
+            "amplitude": amplitude,
+        },
+    )
+
+
+def add_signals(
+    records: Sequence[SignalRecord],
+    *,
+    label: str | None = "synthetic_sum",
+    name: str | None = "synthetic_sum",
+) -> SignalRecord:
+    """Add same-length synthetic signals sample by sample."""
+    _validate_compatible_records(records, require_same_length=True)
+    first = records[0]
+    values = np.sum([record.values for record in records], axis=0)
+    return SignalRecord(
+        values=values,
+        sampling_rate_hz=first.sampling_rate_hz,
+        label=label,
+        name=name,
+        metadata=_composition_metadata("add", records),
+    )
+
+
+def multiply_signals(
+    records: Sequence[SignalRecord],
+    *,
+    label: str | None = "synthetic_product",
+    name: str | None = "synthetic_product",
+) -> SignalRecord:
+    """Multiply same-length synthetic signals sample by sample."""
+    _validate_compatible_records(records, require_same_length=True)
+    first = records[0]
+    values = np.prod([record.values for record in records], axis=0)
+    return SignalRecord(
+        values=values,
+        sampling_rate_hz=first.sampling_rate_hz,
+        label=label,
+        name=name,
+        metadata=_composition_metadata("multiply", records),
+    )
+
+
+def convolve_signals(
+    first: SignalRecord,
+    second: SignalRecord,
+    *,
+    mode: str = "same",
+    label: str | None = "synthetic_convolution",
+    name: str | None = "synthetic_convolution",
+) -> SignalRecord:
+    """Convolve two synthetic signals using ``numpy.convolve`` modes."""
+    _validate_compatible_records([first, second], require_same_length=False)
+    if mode not in {"full", "same", "valid"}:
+        raise ValueError("mode must be one of 'full', 'same', or 'valid'.")
+
+    values = np.convolve(first.values, second.values, mode=mode)
+    return SignalRecord(
+        values=values,
+        sampling_rate_hz=first.sampling_rate_hz,
+        label=label,
+        name=name,
+        metadata={
+            **_composition_metadata("convolve", [first, second]),
+            "mode": mode,
+        },
+    )
+
+
 def make_synthetic_dataset() -> list[SignalRecord]:
     """Return a small representative synthetic dataset."""
     return [
@@ -211,6 +393,37 @@ def make_synthetic_dataset() -> list[SignalRecord]:
         clipped_signal(),
         transient_burst(),
     ]
+
+
+def _validate_compatible_records(
+    records: Sequence[SignalRecord],
+    *,
+    require_same_length: bool,
+) -> None:
+    if len(records) == 0:
+        raise ValueError("At least one SignalRecord is required.")
+
+    sampling_rate_hz = records[0].sampling_rate_hz
+    for record in records:
+        if not np.isclose(record.sampling_rate_hz, sampling_rate_hz):
+            raise ValueError("All records must have the same sampling_rate_hz.")
+
+    if require_same_length:
+        n_samples = records[0].n_samples
+        if any(record.n_samples != n_samples for record in records):
+            raise ValueError("All records must have the same number of samples.")
+
+
+def _composition_metadata(
+    operation: str,
+    records: Sequence[SignalRecord],
+) -> dict[str, object]:
+    return {
+        "operation": operation,
+        "source_names": [record.name for record in records],
+        "source_labels": [record.label for record in records],
+        "source_sample_counts": [record.n_samples for record in records],
+    }
 
 
 # create a main function for testing

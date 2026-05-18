@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 
 from signal_processing_prep.plotting import (
+    plot_frequency_spectra,
+    plot_frequency_spectrum,
     plot_time_signal,
     plot_time_signal_navigator,
 )
@@ -143,3 +145,68 @@ def test_plot_time_signal_navigator_buttons_step_by_window() -> None:
     navigator.step_previous()
     assert np.isclose(navigator.slider.val, 1.0)
     plt.close(navigator.fig)
+
+
+def test_plot_frequency_spectrum_returns_labeled_figure() -> None:
+    """A frequency-domain plot returns labeled matplotlib objects."""
+    record = sine_wave(
+        frequency_hz=20.0,
+        duration_seconds=1.0,
+        sampling_rate_hz=200.0,
+        name="tone",
+    )
+
+    fig, ax = plot_frequency_spectrum(record, spectrum_type="fft", max_frequency_hz=80.0)
+
+    assert fig is ax.figure
+    assert ax.get_xlabel() == "Frequency [Hz]"
+    assert ax.get_ylabel() == "Magnitude"
+    assert "tone" in ax.get_title()
+    assert "FFT magnitude" in ax.get_title()
+    assert len(ax.lines) == 1
+    assert ax.get_xlim()[1] == pytest.approx(80.0)
+    plt.close(fig)
+
+
+def test_plot_frequency_spectra_compares_multiple_records() -> None:
+    """Multiple records can be compared in one frequency-domain figure."""
+    first = sine_wave(
+        frequency_hz=20.0,
+        duration_seconds=1.0,
+        sampling_rate_hz=200.0,
+        name="20_hz",
+    )
+    second = sine_wave(
+        frequency_hz=40.0,
+        duration_seconds=1.0,
+        sampling_rate_hz=200.0,
+        name="40_hz",
+    )
+
+    fig, ax = plot_frequency_spectra(
+        [first, second],
+        spectrum_type="fft",
+        max_frequency_hz=80.0,
+    )
+
+    assert fig is ax.figure
+    assert ax.get_xlabel() == "Frequency [Hz]"
+    assert ax.get_ylabel() == "Magnitude"
+    assert "FFT magnitude comparison" in ax.get_title()
+    assert len(ax.lines) == 2
+    assert [text.get_text() for text in ax.get_legend().get_texts()] == ["20_hz", "40_hz"]
+    plt.close(fig)
+
+
+def test_plot_frequency_spectrum_rejects_invalid_arguments() -> None:
+    """Invalid frequency plotting arguments fail clearly."""
+    record = sine_wave()
+
+    with pytest.raises(ValueError, match="spectrum_type"):
+        plot_frequency_spectrum(record, spectrum_type="unknown")
+
+    with pytest.raises(ValueError, match="max_frequency_hz"):
+        plot_frequency_spectrum(record, max_frequency_hz=0.0)
+
+    with pytest.raises(ValueError, match="At least one"):
+        plot_frequency_spectra([])

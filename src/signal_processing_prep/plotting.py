@@ -10,6 +10,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.widgets import Button, Slider
 
+from signal_processing_prep.frequency_domain import fft_magnitude, psd
 from signal_processing_prep.records import SignalRecord
 
 
@@ -166,6 +167,93 @@ def plot_time_signal_navigator(
     return navigator
 
 
+def plot_frequency_spectrum(
+    record: SignalRecord,
+    *,
+    start_seconds: float | None = None,
+    duration_seconds: float | None = None,
+    spectrum_type: str = "fft",
+    max_frequency_hz: float | None = None,
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot FFT magnitude or PSD for one signal record window."""
+    frequencies, values, ylabel = _windowed_spectrum(
+        record,
+        start_seconds=start_seconds,
+        duration_seconds=duration_seconds,
+        spectrum_type=spectrum_type,
+    )
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 4))
+    else:
+        fig = ax.figure
+
+    ax.plot(frequencies, values, linewidth=1.0, label=record.label or record.name or "signal")
+    ax.set_title(_frequency_plot_title(record, start_seconds, duration_seconds, spectrum_type))
+    ax.set_xlabel("Frequency [Hz]")
+    ax.set_ylabel(ylabel)
+    ax.grid(True, alpha=0.3)
+    if max_frequency_hz is not None:
+        if max_frequency_hz <= 0:
+            raise ValueError("max_frequency_hz must be positive.")
+        ax.set_xlim(0.0, max_frequency_hz)
+    if record.label is not None:
+        ax.legend(loc="best")
+    fig.tight_layout()
+
+    if show:
+        plt.show()
+    return fig, ax
+
+
+def plot_frequency_spectra(
+    records: list[SignalRecord],
+    *,
+    start_seconds: float | None = None,
+    duration_seconds: float | None = None,
+    spectrum_type: str = "fft",
+    max_frequency_hz: float | None = None,
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot FFT magnitude or PSD for multiple signal records."""
+    if len(records) == 0:
+        raise ValueError("At least one SignalRecord is required.")
+    if max_frequency_hz is not None and max_frequency_hz <= 0:
+        raise ValueError("max_frequency_hz must be positive.")
+
+    spectrum_type = _validate_spectrum_type(spectrum_type)
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 4))
+    else:
+        fig = ax.figure
+
+    ylabel = "Magnitude" if spectrum_type == "fft" else "PSD [amplitude^2 / Hz]"
+    for record in records:
+        frequencies, values, ylabel = _windowed_spectrum(
+            record,
+            start_seconds=start_seconds,
+            duration_seconds=duration_seconds,
+            spectrum_type=spectrum_type,
+        )
+        ax.plot(frequencies, values, linewidth=1.0, label=record.name or record.label or "signal")
+
+    spectrum_name = "FFT magnitude" if spectrum_type == "fft" else "PSD"
+    ax.set_title(_frequency_comparison_title(spectrum_name, start_seconds, duration_seconds))
+    ax.set_xlabel("Frequency [Hz]")
+    ax.set_ylabel(ylabel)
+    ax.grid(True, alpha=0.3)
+    if max_frequency_hz is not None:
+        ax.set_xlim(0.0, max_frequency_hz)
+    ax.legend(loc="best")
+    fig.tight_layout()
+
+    if show:
+        plt.show()
+    return fig, ax
+
+
 def _time_plot_title(
     record: SignalRecord,
     start_seconds: float | None,
@@ -179,6 +267,60 @@ def _time_plot_title(
         start = 0.0 if start_seconds is None else start_seconds
         title = f"{title}, window from {start:g} s"
     return title
+
+
+def _frequency_plot_title(
+    record: SignalRecord,
+    start_seconds: float | None,
+    duration_seconds: float | None,
+    spectrum_type: str,
+) -> str:
+    spectrum_name = "FFT magnitude" if spectrum_type == "fft" else "PSD"
+    title = f"{record.name or 'Signal'} - {spectrum_name}"
+    if start_seconds is not None or duration_seconds is not None:
+        start = 0.0 if start_seconds is None else start_seconds
+        title = f"{title}, window from {start:g} s"
+    return title
+
+
+def _frequency_comparison_title(
+    spectrum_name: str,
+    start_seconds: float | None,
+    duration_seconds: float | None,
+) -> str:
+    title = f"{spectrum_name} comparison"
+    if start_seconds is not None or duration_seconds is not None:
+        start = 0.0 if start_seconds is None else start_seconds
+        title = f"{title}, window from {start:g} s"
+    return title
+
+
+def _windowed_spectrum(
+    record: SignalRecord,
+    *,
+    start_seconds: float | None,
+    duration_seconds: float | None,
+    spectrum_type: str,
+) -> tuple[np.ndarray, np.ndarray, str]:
+    _, values = _windowed_data(
+        record,
+        start_seconds=start_seconds,
+        duration_seconds=duration_seconds,
+        max_points=None,
+    )
+    spectrum_type = _validate_spectrum_type(spectrum_type)
+    if spectrum_type == "fft":
+        spectrum = fft_magnitude(values, sampling_rate_hz=record.sampling_rate_hz)
+        return spectrum.frequencies_hz, spectrum.magnitudes, "Magnitude"
+
+    power_spectrum = psd(values, sampling_rate_hz=record.sampling_rate_hz)
+    return power_spectrum.frequencies_hz, power_spectrum.power, "PSD [amplitude^2 / Hz]"
+
+
+def _validate_spectrum_type(spectrum_type: str) -> str:
+    if spectrum_type not in {"fft", "psd"}:
+        raise ValueError("spectrum_type must be 'fft' or 'psd'.")
+    return spectrum_type
 
 
 def _windowed_data(
