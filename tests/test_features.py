@@ -99,6 +99,25 @@ def test_extract_features_preserves_missing_labels_for_small_dataset() -> None:
     assert features.loc[0, "duration_seconds"] == 1.0
 
 
+def test_extract_features_rejects_nonfinite_samples_before_dsp() -> None:
+    """Feature extraction fails clearly instead of propagating NaN/Inf values."""
+    record = SignalRecord(values=np.array([0.0, np.nan, 1.0]), sampling_rate_hz=10.0)
+
+    with pytest.raises(ValueError, match="non-finite samples"):
+        extract_features([record])
+
+
+def test_extract_features_handles_very_low_rate_short_records() -> None:
+    """Tiny valid records keep explicit feature columns instead of failing indirectly."""
+    record = SignalRecord(values=np.ones(5), sampling_rate_hz=5.0, name="tiny")
+
+    features = extract_features([record])
+
+    assert features.shape[0] == 1
+    assert features.loc[0, "record_name"] == "tiny"
+    assert np.isfinite(features.loc[0, "mean_spectrogram_energy"])
+
+
 def test_extract_features_keeps_out_of_range_band_column() -> None:
     """Generic high-frequency bands remain explicit when above Nyquist."""
     record = sine_wave(frequency_hz=5.0, duration_seconds=1.0, sampling_rate_hz=50.0)
@@ -265,6 +284,10 @@ def test_sliding_window_features_rejects_invalid_config() -> None:
 
     with pytest.raises(ValueError, match="step_seconds must be positive"):
         sliding_window_features(record, SlidingWindowConfig(0.1, 0.0))
+
+    low_rate_record = sine_wave(duration_seconds=1.0, sampling_rate_hz=10.0)
+    with pytest.raises(ValueError, match="step_seconds must not exceed"):
+        sliding_window_features(low_rate_record, SlidingWindowConfig(0.04, 0.05))
 
     with pytest.raises(ValueError, match="must not exceed"):
         sliding_window_features(record, SlidingWindowConfig(2.0, 0.1))

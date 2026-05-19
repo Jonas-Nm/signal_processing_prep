@@ -23,6 +23,9 @@ class QualityCheckConfig:
     stationarity_window_seconds: float | None = None
     stationarity_mean_drift_threshold: float = 0.25
     stationarity_std_cv_threshold: float = 0.5
+    time_step_jitter_threshold: float = 0.01
+    time_gap_count_threshold: int = 0
+    sampling_rate_mismatch_threshold: float = 0.01
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,11 @@ class QualityReport:
     stationarity_mean_drift: float
     stationarity_std_cv: float
     is_likely_nonstationary: bool
+    time_step_jitter_fraction: float
+    time_gap_count: int
+    has_time_axis_irregularity: bool
+    sampling_rate_mismatch_fraction: float
+    has_sampling_rate_mismatch: bool
     issues: tuple[str, ...]
 
     def to_dict(self) -> dict[str, float | int | bool | str | None]:
@@ -70,6 +78,11 @@ class QualityReport:
             "stationarity_mean_drift": self.stationarity_mean_drift,
             "stationarity_std_cv": self.stationarity_std_cv,
             "is_likely_nonstationary": self.is_likely_nonstationary,
+            "time_step_jitter_fraction": self.time_step_jitter_fraction,
+            "time_gap_count": self.time_gap_count,
+            "has_time_axis_irregularity": self.has_time_axis_irregularity,
+            "sampling_rate_mismatch_fraction": self.sampling_rate_mismatch_fraction,
+            "has_sampling_rate_mismatch": self.has_sampling_rate_mismatch,
             "issues": "; ".join(self.issues),
         }
 
@@ -118,6 +131,12 @@ def assess_signal_quality(
             or stationarity_std_cv > config.stationarity_std_cv_threshold
         )
 
+    time_step_jitter_fraction, time_gap_count, has_time_axis_irregularity = (
+        _time_axis_indicators(record, config)
+    )
+    sampling_rate_mismatch_fraction, has_sampling_rate_mismatch = (
+        _sampling_rate_mismatch_indicators(record, config)
+    )
     is_clipped = clipping_fraction >= config.clipping_fraction_threshold
     issues = _quality_issues(
         record,
@@ -127,6 +146,8 @@ def assess_signal_quality(
         is_near_constant=is_near_constant,
         has_large_amplitude=has_large_amplitude,
         is_likely_nonstationary=is_likely_nonstationary,
+        has_time_axis_irregularity=has_time_axis_irregularity,
+        has_sampling_rate_mismatch=has_sampling_rate_mismatch,
         all_values_missing=finite_values.size == 0,
     )
 
@@ -149,6 +170,11 @@ def assess_signal_quality(
         stationarity_mean_drift=stationarity_mean_drift,
         stationarity_std_cv=stationarity_std_cv,
         is_likely_nonstationary=is_likely_nonstationary,
+        time_step_jitter_fraction=time_step_jitter_fraction,
+        time_gap_count=time_gap_count,
+        has_time_axis_irregularity=has_time_axis_irregularity,
+        sampling_rate_mismatch_fraction=sampling_rate_mismatch_fraction,
+        has_sampling_rate_mismatch=has_sampling_rate_mismatch,
         issues=tuple(issues),
     )
 
@@ -180,6 +206,12 @@ def _validate_quality_config(config: QualityCheckConfig) -> None:
         raise ValueError("large_amplitude_threshold must be positive.")
     if config.stationarity_window_seconds is not None and config.stationarity_window_seconds <= 0:
         raise ValueError("stationarity_window_seconds must be positive.")
+    if config.time_step_jitter_threshold < 0:
+        raise ValueError("time_step_jitter_threshold must be non-negative.")
+    if config.time_gap_count_threshold < 0:
+        raise ValueError("time_gap_count_threshold must be non-negative.")
+    if config.sampling_rate_mismatch_threshold < 0:
+        raise ValueError("sampling_rate_mismatch_threshold must be non-negative.")
 
 
 def _quality_report_columns() -> tuple[str, ...]:
@@ -202,6 +234,11 @@ def _quality_report_columns() -> tuple[str, ...]:
         "stationarity_mean_drift",
         "stationarity_std_cv",
         "is_likely_nonstationary",
+        "time_step_jitter_fraction",
+        "time_gap_count",
+        "has_time_axis_irregularity",
+        "sampling_rate_mismatch_fraction",
+        "has_sampling_rate_mismatch",
         "issues",
     )
 
@@ -249,6 +286,52 @@ def _stationarity_indicators(
     return mean_drift, std_cv
 
 
+def _time_axis_indicators(
+    record: SignalRecord,
+    config: QualityCheckConfig,
+) -> tuple[float, int, bool]:
+    jitter = _metadata_float(record.metadata.get("time_step_jitter_fraction"))
+    gap_count = _metadata_int(record.metadata.get("time_gap_count"))
+    if jitter is None:
+        jitter = 0.0
+    if gap_count is None:
+        gap_count = 0
+    irregular = (
+        jitter > config.time_step_jitter_threshold
+        or gap_count > config.time_gap_count_threshold
+        or record.metadata.get("time_axis_valid") is False
+    )
+    return jitter, gap_count, irregular
+
+
+def _sampling_rate_mismatch_indicators(
+    record: SignalRecord,
+    config: QualityCheckConfig,
+) -> tuple[float, bool]:
+    mismatch_fraction = _metadata_float(record.metadata.get("sampling_rate_mismatch_fraction"))
+    if mismatch_fraction is None:
+        mismatch_fraction = 0.0
+    return mismatch_fraction, mismatch_fraction > config.sampling_rate_mismatch_threshold
+
+
+def _metadata_float(value: object) -> float | None:
+    try:
+        if value is None or pd.isna(value):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _metadata_int(value: object) -> int | None:
+    try:
+        if value is None or pd.isna(value):
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _plateau_mask(mask: np.ndarray) -> np.ndarray:
     plateau = np.zeros_like(mask, dtype=bool)
     start: int | None = None
@@ -272,6 +355,8 @@ def _quality_issues(
     is_near_constant: bool,
     has_large_amplitude: bool,
     is_likely_nonstationary: bool,
+    has_time_axis_irregularity: bool,
+    has_sampling_rate_mismatch: bool,
     all_values_missing: bool,
 ) -> list[str]:
     issues: list[str] = []
@@ -291,4 +376,8 @@ def _quality_issues(
         issues.append("large_amplitude")
     if is_likely_nonstationary:
         issues.append("nonstationarity_indicator")
+    if has_time_axis_irregularity:
+        issues.append("time_axis_irregularity")
+    if has_sampling_rate_mismatch:
+        issues.append("sampling_rate_mismatch")
     return issues

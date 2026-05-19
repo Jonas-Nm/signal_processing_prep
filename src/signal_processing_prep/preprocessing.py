@@ -144,7 +144,7 @@ def segment_signal(
         record.sampling_rate_hz,
         field_name="step_seconds",
     )
-    if step_samples > window_samples:
+    if step_seconds > window_seconds:
         raise ValueError("step_seconds must not exceed window_seconds.")
     if window_samples > record.n_samples and not include_partial:
         raise ValueError("window_seconds must not exceed the record duration.")
@@ -211,10 +211,7 @@ def _validate_cutoff(cutoff_hz: float | None, nyquist_hz: float, name: str) -> N
 def _seconds_to_samples(seconds: float, sampling_rate_hz: float, *, field_name: str) -> int:
     if seconds <= 0:
         raise ValueError(f"{field_name} must be positive.")
-    samples = int(round(seconds * sampling_rate_hz))
-    if samples <= 0:
-        raise ValueError(f"{field_name} produces no samples.")
-    return samples
+    return max(1, int(round(seconds * sampling_rate_hz)))
 
 
 def _window_record(

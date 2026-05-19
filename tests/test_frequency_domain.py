@@ -56,6 +56,19 @@ def test_band_energy_captures_sine_mean_square_power() -> None:
     assert band_energy(record, low_hz=100.0, high_hz=150.0) == pytest.approx(0.0, abs=1e-12)
 
 
+def test_band_energy_uses_half_open_boundaries_for_adjacent_bands() -> None:
+    """Shared band boundaries are not double counted across adjacent bands."""
+    record = sine_wave(
+        frequency_hz=100.0,
+        duration_seconds=1.0,
+        sampling_rate_hz=1000.0,
+        amplitude=2.0,
+    )
+
+    assert band_energy(record, low_hz=0.0, high_hz=100.0) == pytest.approx(0.0, abs=1e-12)
+    assert band_energy(record, low_hz=100.0, high_hz=200.0) == pytest.approx(2.0, rel=1e-3)
+
+
 def test_band_energy_rejects_invalid_frequency_bands() -> None:
     """Band energy validates band boundaries against the Nyquist frequency."""
     record = sine_wave(sampling_rate_hz=1000.0)

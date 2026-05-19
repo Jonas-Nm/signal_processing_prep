@@ -1,12 +1,18 @@
 """Signal-processing analysis toolkit for exploratory time-series tasks."""
 
 from signal_processing_prep.config import ProjectConfig, load_config
-from signal_processing_prep.data_loading import load_signal_file
+from signal_processing_prep.data_loading import (
+    load_signal_dataset,
+    load_signal_file,
+    load_signal_file_channels,
+)
 from signal_processing_prep.features import (
     FeatureExtractionConfig,
     FrequencyBand,
+    SlidingWindowConfig,
     extract_features,
     frequency_bands_from_mapping,
+    sliding_window_features,
 )
 from signal_processing_prep.modeling import (
     ModelEvaluation,
@@ -20,7 +26,11 @@ from signal_processing_prep.plotting import (
     plot_confusion_matrix,
     plot_feature_distribution,
     plot_feature_importance,
+    plot_frequency_spectra,
+    plot_frequency_spectrum,
     plot_spectrogram,
+    plot_time_signal,
+    plot_time_signal_navigator,
     save_figure,
 )
 from signal_processing_prep.pipeline import (
@@ -57,6 +67,7 @@ __all__ = [
     "FeatureExtractionConfig",
     "FilterSpec",
     "FrequencyBand",
+    "SlidingWindowConfig",
     "AnalysisPipelineConfig",
     "AnalysisPipelineResult",
     "MarkdownReport",
@@ -74,16 +85,23 @@ __all__ = [
     "assess_dataset_quality",
     "assess_signal_quality",
     "extract_features",
+    "sliding_window_features",
     "frequency_bands_from_mapping",
     "dataset_overview_from_records",
     "generate_markdown_summary",
+    "load_signal_dataset",
     "load_config",
     "load_signal_file",
+    "load_signal_file_channels",
     "plot_confusion_matrix",
     "plot_anomaly_scores",
     "plot_feature_distribution",
     "plot_feature_importance",
+    "plot_frequency_spectra",
+    "plot_frequency_spectrum",
     "plot_spectrogram",
+    "plot_time_signal",
+    "plot_time_signal_navigator",
     "run_isolation_forest",
     "run_supervised_baselines",
     "run_synthetic_analysis",

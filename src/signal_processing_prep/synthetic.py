@@ -424,11 +424,3 @@ def _composition_metadata(
         "source_labels": [record.label for record in records],
         "source_sample_counts": [record.n_samples for record in records],
     }
-
-
-# create a main function for testing
-
-if __name__ == "__main__":
-    time = _time_axis(duration_seconds=2.0, sampling_rate_hz=1000.0)
-    print(time[:10])
-    

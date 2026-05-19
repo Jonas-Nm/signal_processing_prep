@@ -190,13 +190,17 @@ def band_energy(
 
     The single-sided FFT bin energies sum to total signal mean-square amplitude,
     so this is directly comparable across bands for fixed preprocessing choices.
+    Bands are treated as half-open intervals ``[low_hz, high_hz)`` so adjacent
+    bands do not double count shared boundary bins. The Nyquist bin is included
+    when ``high_hz`` is exactly the Nyquist frequency.
     """
     if low_hz < 0:
         raise ValueError("low_hz must be non-negative.")
     if high_hz <= low_hz:
         raise ValueError("high_hz must be greater than low_hz.")
     values, sampling_rate = _values_and_sampling_rate(signal, sampling_rate_hz)
-    if high_hz > sampling_rate / 2.0:
+    nyquist_hz = sampling_rate / 2.0
+    if high_hz > nyquist_hz:
         raise ValueError("high_hz must not exceed the Nyquist frequency.")
     if remove_mean:
         values = values - np.mean(values)
@@ -209,7 +213,10 @@ def band_energy(
         if values.size % 2 == 1:
             energies[-1] *= 2.0
 
-    band_mask = (frequencies >= low_hz) & (frequencies <= high_hz)
+    if np.isclose(high_hz, nyquist_hz):
+        band_mask = (frequencies >= low_hz) & (frequencies <= high_hz)
+    else:
+        band_mask = (frequencies >= low_hz) & (frequencies < high_hz)
     return float(np.sum(energies[band_mask]))
 
 

@@ -110,6 +110,28 @@ def test_analyze_records_can_disable_modeling() -> None:
     assert "Modeling was disabled or skipped" in result.markdown_summary
 
 
+def test_analyze_records_skips_invalid_feature_records_with_note() -> None:
+    """The pipeline documents invalid records instead of poisoning feature tables."""
+    good = sine_wave(name="good", label=None)
+    bad = sine_wave(name="bad", label=None)
+    bad = type(bad)(
+        values=pd.Series(bad.values).mask(lambda series: series.index == 3).to_numpy(),
+        sampling_rate_hz=bad.sampling_rate_hz,
+        label=bad.label,
+        name=bad.name,
+        metadata=bad.metadata,
+    )
+
+    result = analyze_records(
+        [good, bad],
+        AnalysisPipelineConfig(run_modeling=False, invalid_record_policy="skip"),
+    )
+
+    assert result.features["record_name"].tolist() == ["good"]
+    assert any("Feature extraction skipped bad" in note for note in result.processing_notes)
+    assert "Processing notes" in result.markdown_summary
+
+
 def test_analyze_records_rejects_empty_input() -> None:
     """Empty datasets fail clearly."""
     with pytest.raises(ValueError, match="At least one SignalRecord"):

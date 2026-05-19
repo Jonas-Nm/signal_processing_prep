@@ -35,6 +35,28 @@ The main interview-facing walkthrough is `notebooks/01_signal_analysis_walkthrou
 It starts with synthetic records, then calls the package modules for quality checks, plots,
 features, optional modeling, anomaly scoring, and Markdown reporting.
 
+## Loading Real Datasets
+
+Use `load_signal_dataset` with a config file to discover all matching files under
+`paths.data_dir`. CSV time columns such as `time`, `timestamp`, or `time_seconds`
+are used to infer sampling rate and preserve acquisition checks such as timing
+jitter and gaps in record metadata.
+
+```python
+from signal_processing_prep import load_signal_dataset
+
+records = load_signal_dataset(
+    "configs/default.yaml",
+    metadata_table="data/raw/metadata.csv",  # optional
+    split_channels=True,
+)
+```
+
+Multi-channel WAV, NPY, TXT, and multi-signal CSV files are split into explicit
+single-channel `SignalRecord`s. Supervised baselines group train/test splits by
+`source_name` or `record_name` when available, which keeps windows from the same
+recording on one side of the evaluation split.
+
 ## Quick Synthetic Plot
 
 After setup, generate and inspect a synthetic signal:

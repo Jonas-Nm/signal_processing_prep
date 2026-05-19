@@ -155,3 +155,7 @@ def test_preprocessing_rejects_invalid_filter_and_window_settings() -> None:
 
     with pytest.raises(ValueError, match="step_seconds must not exceed"):
         segment_signal(record, window_seconds=0.5, step_seconds=1.0)
+
+    low_rate_record = sine_wave(duration_seconds=1.0, sampling_rate_hz=10.0)
+    with pytest.raises(ValueError, match="step_seconds must not exceed"):
+        segment_signal(low_rate_record, window_seconds=0.04, step_seconds=0.05)

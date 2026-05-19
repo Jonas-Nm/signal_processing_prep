@@ -80,3 +80,27 @@ def test_load_config_rejects_non_mapping_sections(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="section 'loading' must be a mapping"):
         load_config(config_path)
+
+
+def test_load_config_rejects_invalid_analysis_and_filter_values(tmp_path: Path) -> None:
+    """Config validation catches invalid windows, bands, and filter shapes early."""
+    bad_window = tmp_path / "bad_window.yaml"
+    bad_window.write_text("analysis:\n  window:\n    overlap_fraction: 1.0\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="overlap_fraction"):
+        load_config(bad_window)
+
+    bad_band = tmp_path / "bad_band.yaml"
+    bad_band.write_text(
+        "analysis:\n  frequency_bands_hz:\n    bad: [10, 5]\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="greater than"):
+        load_config(bad_band)
+
+    bad_filter = tmp_path / "bad_filter.yaml"
+    bad_filter.write_text(
+        "filtering:\n  enabled: true\n  kind: bandpass\n  low_cut_hz: 20\n  high_cut_hz: 10\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="low_cut_hz"):
+        load_config(bad_filter)

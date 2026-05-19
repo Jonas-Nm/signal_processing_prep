@@ -75,6 +75,8 @@ def extract_features(
         config = FeatureExtractionConfig()
     _validate_feature_config(config)
 
+    for record in records:
+        _validate_feature_record(record)
     rows = [_record_features(record, config) for record in records]
     return pd.DataFrame(rows)
 
@@ -88,6 +90,7 @@ def sliding_window_features(
     The returned DataFrame has one row per window and includes explicit timing
     columns so feature trajectories can be plotted or aligned with events.
     """
+    _validate_feature_record(record)
     window_samples = _seconds_to_sample_count(
         config.window_seconds,
         record.sampling_rate_hz,
@@ -98,6 +101,8 @@ def sliding_window_features(
         record.sampling_rate_hz,
         field_name="step_seconds",
     )
+    if config.step_seconds > config.window_seconds:
+        raise ValueError("step_seconds must not exceed window_seconds.")
     if window_samples > record.n_samples:
         raise ValueError("window_seconds must not exceed the record duration.")
     if not config.include_time_domain and not config.include_frequency_domain:
@@ -299,6 +304,14 @@ def _validate_feature_config(config: FeatureExtractionConfig) -> None:
             )
 
 
+def _validate_feature_record(record: SignalRecord) -> None:
+    if not np.isfinite(record.values).all():
+        raise ValueError(
+            f"Record {record.name or '<unnamed>'} contains non-finite samples; "
+            "run quality checks and clean, impute, or skip the record before feature extraction."
+        )
+
+
 def _spectrogram_step_exceeds_window(
     step_seconds: float | None,
     window_seconds: float,
@@ -338,7 +351,4 @@ def _seconds_to_sample_count(
 ) -> int:
     if seconds <= 0:
         raise ValueError(f"{field_name} must be positive.")
-    sample_count = int(round(seconds * sampling_rate_hz))
-    if sample_count <= 0:
-        raise ValueError(f"{field_name} produces no samples.")
-    return sample_count
+    return max(1, int(round(seconds * sampling_rate_hz)))

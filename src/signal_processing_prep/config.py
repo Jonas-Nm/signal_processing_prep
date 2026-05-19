@@ -109,7 +109,7 @@ def _load_paths(raw_paths: Mapping[str, Any]) -> PathsConfig:
 
 def _load_loading(raw_loading: Mapping[str, Any]) -> LoadingConfig:
     return LoadingConfig(
-        file_patterns=list(raw_loading.get("file_patterns", ["*.csv", "*.txt", "*.npy", "*.wav"])),
+        file_patterns=_file_patterns(raw_loading.get("file_patterns", ["*.csv", "*.txt", "*.npy", "*.wav"])),
         sampling_rate_hz=_optional_float(raw_loading.get("sampling_rate_hz")),
         label_column=raw_loading.get("label_column"),
         signal_column=raw_loading.get("signal_column"),
@@ -122,23 +122,58 @@ def _load_analysis(raw_analysis: Mapping[str, Any]) -> AnalysisConfig:
         name: _frequency_band_tuple(value) for name, value in raw_bands.items()
     }
     raw_window = raw_analysis.get("window", {})
+    size_seconds = float(raw_window.get("size_seconds", 1.0))
+    overlap_fraction = float(raw_window.get("overlap_fraction", 0.5))
+    if size_seconds <= 0:
+        raise ValueError("analysis.window.size_seconds must be positive.")
+    if not 0.0 <= overlap_fraction < 1.0:
+        raise ValueError("analysis.window.overlap_fraction must be in the interval [0, 1).")
     return AnalysisConfig(
         frequency_bands_hz=frequency_bands or AnalysisConfig().frequency_bands_hz,
         window=WindowConfig(
-            size_seconds=float(raw_window.get("size_seconds", 1.0)),
-            overlap_fraction=float(raw_window.get("overlap_fraction", 0.5)),
+            size_seconds=size_seconds,
+            overlap_fraction=overlap_fraction,
         ),
     )
 
 
 def _load_filtering(raw_filtering: Mapping[str, Any]) -> FilteringConfig:
+    enabled = bool(raw_filtering.get("enabled", False))
+    kind = raw_filtering.get("kind")
+    kind_text = str(kind).lower() if kind is not None else None
+    low_cut_hz = _optional_float(raw_filtering.get("low_cut_hz"))
+    high_cut_hz = _optional_float(raw_filtering.get("high_cut_hz"))
+    order = int(raw_filtering.get("order", 4))
+    if order <= 0:
+        raise ValueError("filtering.order must be positive.")
+    if enabled and kind is None:
+        raise ValueError("filtering.kind is required when filtering is enabled.")
+    if kind_text is not None and kind_text not in {"lowpass", "highpass", "bandpass"}:
+        raise ValueError("filtering.kind must be 'lowpass', 'highpass', or 'bandpass'.")
+    if low_cut_hz is not None and low_cut_hz <= 0:
+        raise ValueError("filtering.low_cut_hz must be positive when provided.")
+    if high_cut_hz is not None and high_cut_hz <= 0:
+        raise ValueError("filtering.high_cut_hz must be positive when provided.")
+    if kind_text == "bandpass" and low_cut_hz is not None and high_cut_hz is not None and low_cut_hz >= high_cut_hz:
+        raise ValueError("filtering.low_cut_hz must be less than high_cut_hz for bandpass filters.")
     return FilteringConfig(
-        enabled=bool(raw_filtering.get("enabled", False)),
-        kind=raw_filtering.get("kind"),
-        low_cut_hz=_optional_float(raw_filtering.get("low_cut_hz")),
-        high_cut_hz=_optional_float(raw_filtering.get("high_cut_hz")),
-        order=int(raw_filtering.get("order", 4)),
+        enabled=enabled,
+        kind=kind,
+        low_cut_hz=low_cut_hz,
+        high_cut_hz=high_cut_hz,
+        order=order,
     )
+
+
+def _file_patterns(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, list | tuple):
+        raise ValueError("loading.file_patterns must be a string or list of strings.")
+    patterns = [str(pattern) for pattern in value]
+    if not patterns:
+        raise ValueError("loading.file_patterns must not be empty.")
+    return patterns
 
 
 def _optional_float(value: Any) -> float | None:
@@ -151,4 +186,10 @@ def _frequency_band_tuple(value: Any) -> tuple[float, float]:
     if not isinstance(value, list | tuple) or len(value) != 2:
         raise ValueError("Frequency bands must contain exactly two values.")
     low, high = value
-    return float(low), float(high)
+    low_hz = float(low)
+    high_hz = float(high)
+    if low_hz < 0:
+        raise ValueError("Frequency band low value must be non-negative.")
+    if high_hz <= low_hz:
+        raise ValueError("Frequency band high value must be greater than low value.")
+    return low_hz, high_hz

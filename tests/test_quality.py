@@ -86,6 +86,42 @@ def test_assess_signal_quality_flags_simple_nonstationarity() -> None:
     assert "nonstationarity_indicator" in report.issues
 
 
+def test_assess_signal_quality_flags_time_axis_irregularity_from_metadata() -> None:
+    """Acquisition time-axis irregularities from loaders are surfaced as quality issues."""
+    record = SignalRecord(
+        values=np.ones(10),
+        sampling_rate_hz=10.0,
+        metadata={"time_step_jitter_fraction": 0.2, "time_gap_count": 1},
+    )
+
+    report = assess_signal_quality(
+        record,
+        QualityCheckConfig(time_step_jitter_threshold=0.05),
+    )
+
+    assert report.has_time_axis_irregularity is True
+    assert report.time_gap_count == 1
+    assert "time_axis_irregularity" in report.issues
+
+
+def test_assess_signal_quality_flags_sampling_rate_mismatch_from_metadata() -> None:
+    """Provided-vs-inferred sampling-rate disagreements are explicit quality issues."""
+    record = SignalRecord(
+        values=np.ones(10),
+        sampling_rate_hz=12.0,
+        metadata={"sampling_rate_mismatch_fraction": 0.2},
+    )
+
+    report = assess_signal_quality(
+        record,
+        QualityCheckConfig(sampling_rate_mismatch_threshold=0.05),
+    )
+
+    assert report.has_sampling_rate_mismatch is True
+    assert report.sampling_rate_mismatch_fraction == 0.2
+    assert "sampling_rate_mismatch" in report.issues
+
+
 def test_assess_dataset_quality_returns_one_row_per_record() -> None:
     """Dataset quality checks are tabular and preserve metadata."""
     records = [
@@ -124,6 +160,11 @@ def test_assess_dataset_quality_empty_input_has_stable_columns() -> None:
         "stationarity_mean_drift",
         "stationarity_std_cv",
         "is_likely_nonstationary",
+        "time_step_jitter_fraction",
+        "time_gap_count",
+        "has_time_axis_irregularity",
+        "sampling_rate_mismatch_fraction",
+        "has_sampling_rate_mismatch",
         "issues",
     ]
 

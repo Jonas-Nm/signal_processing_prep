@@ -35,12 +35,11 @@ def test_run_supervised_baselines_returns_metrics_and_predictions() -> None:
         assert evaluation.metrics["n_test"] > 0
         assert evaluation.confusion_matrix is not None
         assert evaluation.confusion_matrix.shape == (2, 2)
-        assert set(evaluation.predictions.columns) == {
-            "row_index",
-            "true_label",
-            "predicted_label",
-        }
+        assert {"row_index", "true_label", "predicted_label", "record_name", "label"}.issubset(
+            evaluation.predictions.columns
+        )
         assert evaluation.feature_importances is not None
+        assert "group_shuffle_split" in evaluation.split_strategy
 
 
 def test_run_supervised_baselines_rejects_missing_or_insufficient_labels() -> None:
@@ -86,6 +85,29 @@ def test_run_isolation_forest_returns_scores_not_classes() -> None:
     assert "window_start_seconds" in evaluation.predictions.columns
 
 
+def test_supervised_baselines_keep_grouped_windows_together() -> None:
+    """Grouped evaluation keeps windows from the same source on one side of the split."""
+    features = pd.DataFrame(
+        {
+            "source_name": ["n1", "n1", "n2", "n2", "f1", "f1", "f2", "f2"],
+            "label": ["normal", "normal", "normal", "normal", "fault", "fault", "fault", "fault"],
+            "rms": [1.0, 1.1, 0.9, 1.05, 3.0, 3.1, 2.9, 3.2],
+            "crest_factor": [1.5, 1.4, 1.6, 1.5, 4.0, 4.2, 3.8, 4.1],
+        }
+    )
+
+    results = run_supervised_baselines(
+        features,
+        group_column="source_name",
+        test_size=0.5,
+        random_state=3,
+    )
+
+    for evaluation in results.values():
+        assert "group_column=source_name" in evaluation.split_strategy
+        assert evaluation.predictions["source_name"].value_counts().eq(2).all()
+
+
 def test_top_anomalies_and_summary_text_are_inspection_oriented() -> None:
     """Anomaly helpers rank candidates without claiming confirmed faults."""
     features = pd.DataFrame(
@@ -123,6 +145,22 @@ def test_run_isolation_forest_preserves_metadata_with_duplicate_index() -> None:
 
     assert evaluation.predictions["record_name"].tolist() == ["a", "b", "c", "d", "e"]
     assert evaluation.predictions["row_index"].tolist() == [0, 0, 1, 1, 2]
+
+
+def test_modeling_drops_rows_with_no_observed_numeric_features() -> None:
+    """Rows with all-missing numeric features are not fabricated by median imputation."""
+    features = pd.DataFrame(
+        {
+            "record_name": ["a", "b", "c", "d", "e"],
+            "rms": [1.0, 1.1, None, 1.05, 10.0],
+            "crest_factor": [1.5, 1.4, None, 1.5, 8.0],
+        }
+    )
+
+    evaluation = run_isolation_forest(features, contamination=0.25, random_state=2)
+
+    assert evaluation.metrics["n_samples"] == 4.0
+    assert evaluation.predictions["record_name"].tolist() == ["a", "b", "d", "e"]
 
 
 def test_run_isolation_forest_rejects_no_numeric_features() -> None:

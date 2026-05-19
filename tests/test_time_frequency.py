@@ -96,5 +96,9 @@ def test_time_frequency_helpers_reject_invalid_window_arguments() -> None:
     with pytest.raises(ValueError, match="step_seconds must not exceed"):
         spectrogram_analysis(record, window_seconds=0.1, step_seconds=0.2)
 
+    low_rate_record = sine_wave(duration_seconds=1.0, sampling_rate_hz=10.0)
+    with pytest.raises(ValueError, match="step_seconds must not exceed"):
+        spectrogram_analysis(low_rate_record, window_seconds=0.04, step_seconds=0.05)
+
     with pytest.raises(ValueError, match="Nyquist"):
         morlet_wavelet_scalogram(record, frequencies_hz=[60.0])

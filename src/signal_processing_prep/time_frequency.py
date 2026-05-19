@@ -236,14 +236,10 @@ def _window_and_overlap_samples(
         step_seconds = window_seconds / 2.0
     if step_seconds <= 0:
         raise ValueError("step_seconds must be positive.")
-    nperseg = int(round(window_seconds * sampling_rate_hz))
-    step_samples = int(round(step_seconds * sampling_rate_hz))
-    if nperseg <= 0:
-        raise ValueError("window_seconds produces no samples.")
-    if step_samples <= 0:
-        raise ValueError("step_seconds produces no samples.")
+    if step_seconds > window_seconds:
+        raise ValueError("step_seconds must not exceed window_seconds.")
+    nperseg = max(1, int(round(window_seconds * sampling_rate_hz)))
+    step_samples = max(1, int(round(step_seconds * sampling_rate_hz)))
     if nperseg > n_samples:
         raise ValueError("window_seconds must not exceed the signal duration.")
-    if step_samples > nperseg:
-        raise ValueError("step_seconds must not exceed window_seconds.")
     return nperseg, nperseg - step_samples
