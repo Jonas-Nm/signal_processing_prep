@@ -31,6 +31,9 @@ data/interim/*
 data/processed/*
 reports/figures/*
 reports/summaries/*
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
 !reports/figures/.gitkeep
 !reports/summaries/.gitkeep
 

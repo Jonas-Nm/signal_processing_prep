@@ -29,6 +29,12 @@ pytest
 
 The `.venv/` directory is local developer state and is ignored by Git.
 
+## Walkthrough
+
+The main interview-facing walkthrough is `notebooks/01_signal_analysis_walkthrough.ipynb`.
+It starts with synthetic records, then calls the package modules for quality checks, plots,
+features, optional modeling, anomaly scoring, and Markdown reporting.
+
 ## Quick Synthetic Plot
 
 After setup, generate and inspect a synthetic signal:

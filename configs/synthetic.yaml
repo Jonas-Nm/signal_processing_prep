@@ -1,0 +1,39 @@
+# Synthetic analysis configuration for demos and tests.
+
+paths:
+  data_dir: data/raw
+  reports_dir: reports
+  figures_dir: reports/figures
+  summaries_dir: reports/summaries
+
+loading:
+  file_patterns:
+    - "*.csv"
+    - "*.txt"
+    - "*.npy"
+    - "*.wav"
+  sampling_rate_hz: null
+  label_column: null
+  signal_column: null
+
+analysis:
+  frequency_bands_hz:
+    low:
+      - 0
+      - 100
+    bearing_like:
+      - 100
+      - 500
+    high:
+      - 500
+      - 1000
+  window:
+    size_seconds: 0.25
+    overlap_fraction: 0.5
+
+filtering:
+  enabled: false
+  kind: null
+  low_cut_hz: null
+  high_cut_hz: null
+  order: 4

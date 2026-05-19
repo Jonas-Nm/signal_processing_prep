@@ -23,6 +23,12 @@ from signal_processing_prep.plotting import (
     plot_spectrogram,
     save_figure,
 )
+from signal_processing_prep.pipeline import (
+    AnalysisPipelineConfig,
+    AnalysisPipelineResult,
+    analyze_records,
+    run_synthetic_analysis,
+)
 from signal_processing_prep.preprocessing import (
     FilterSpec,
     apply_configured_filter,
@@ -51,6 +57,8 @@ __all__ = [
     "FeatureExtractionConfig",
     "FilterSpec",
     "FrequencyBand",
+    "AnalysisPipelineConfig",
+    "AnalysisPipelineResult",
     "MarkdownReport",
     "ModelEvaluation",
     "ProjectConfig",
@@ -61,6 +69,7 @@ __all__ = [
     "apply_configured_filter",
     "apply_filter",
     "apply_window",
+    "analyze_records",
     "anomaly_summary_text",
     "assess_dataset_quality",
     "assess_signal_quality",
@@ -77,6 +86,7 @@ __all__ = [
     "plot_spectrogram",
     "run_isolation_forest",
     "run_supervised_baselines",
+    "run_synthetic_analysis",
     "save_figure",
     "save_markdown_summary",
     "segment_dataset",
