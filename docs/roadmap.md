@@ -180,7 +180,7 @@ Acceptance criteria:
 
 - Add plotting functions for raw signal, zoomed signal, FFT magnitude, PSD, spectrogram, feature distributions, confusion matrix, and feature importance where applicable.
 - Ensure plots include titles, axis labels, units where known, and legends when comparing conditions.
-- Save figures to `reports/figures/[date]/`.
+- Save figures to `reports/figures/"date"/`.
 - Add Markdown summary generation with these sections:
   1. Dataset overview
   2. Acquisition assumptions
