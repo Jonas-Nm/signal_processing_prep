@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
+from typing import Mapping
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.widgets import Button, Slider
 
 from signal_processing_prep.frequency_domain import fft_magnitude, psd
 from signal_processing_prep.records import SignalRecord
+from signal_processing_prep.time_frequency import spectrogram_analysis
 
 
 def plot_time_signal(
@@ -254,6 +259,186 @@ def plot_frequency_spectra(
     return fig, ax
 
 
+def plot_spectrogram(
+    record: SignalRecord,
+    *,
+    window_seconds: float = 0.1,
+    step_seconds: float | None = None,
+    max_frequency_hz: float | None = None,
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot a power spectrogram for one signal record."""
+    if max_frequency_hz is not None and max_frequency_hz <= 0:
+        raise ValueError("max_frequency_hz must be positive.")
+    result = spectrogram_analysis(
+        record,
+        window_seconds=window_seconds,
+        step_seconds=step_seconds,
+    )
+    frequencies = result.frequencies_hz
+    power = result.power
+    if max_frequency_hz is not None:
+        mask = frequencies <= max_frequency_hz
+        frequencies = frequencies[mask]
+        power = power[mask, :]
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 4))
+    else:
+        fig = ax.figure
+
+    mesh = ax.pcolormesh(
+        result.times_seconds,
+        frequencies,
+        10.0 * np.log10(np.maximum(power, 1e-24)),
+        shading="auto",
+    )
+    ax.set_title(f"{record.name or 'Signal'} - spectrogram")
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Frequency [Hz]")
+    colorbar = fig.colorbar(mesh, ax=ax)
+    colorbar.set_label("Power [dB]")
+    fig.tight_layout()
+
+    if show:
+        plt.show()
+    return fig, ax
+
+
+def plot_feature_distribution(
+    features: pd.DataFrame,
+    feature: str,
+    *,
+    label_column: str | None = "label",
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot one feature distribution, optionally grouped by label."""
+    if feature not in features.columns:
+        raise ValueError(f"Feature column not found: {feature}")
+    if label_column is not None and label_column not in features.columns:
+        raise ValueError(f"Label column not found: {label_column}")
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 4))
+    else:
+        fig = ax.figure
+
+    if label_column is None or features[label_column].isna().all():
+        values = pd.to_numeric(features[feature], errors="coerce").dropna()
+        ax.hist(values, bins=min(20, max(5, values.size)), alpha=0.75)
+    else:
+        for label, group in features.groupby(label_column, dropna=True):
+            values = pd.to_numeric(group[feature], errors="coerce").dropna()
+            if not values.empty:
+                ax.hist(values, bins=min(20, max(5, values.size)), alpha=0.55, label=str(label))
+        ax.legend(loc="best")
+
+    ax.set_title(f"{feature} distribution")
+    ax.set_xlabel(feature)
+    ax.set_ylabel("Count")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    if show:
+        plt.show()
+    return fig, ax
+
+
+def plot_confusion_matrix(
+    matrix: np.ndarray,
+    labels: list[str],
+    *,
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot a labeled confusion matrix."""
+    matrix = np.asarray(matrix)
+    if matrix.shape != (len(labels), len(labels)):
+        raise ValueError("matrix shape must match the number of labels.")
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(5, 4))
+    else:
+        fig = ax.figure
+
+    image = ax.imshow(matrix, cmap="Blues")
+    ax.set_title("Confusion matrix")
+    ax.set_xlabel("Predicted label")
+    ax.set_ylabel("True label")
+    ax.set_xticks(np.arange(len(labels)), labels=labels, rotation=45, ha="right")
+    ax.set_yticks(np.arange(len(labels)), labels=labels)
+    threshold = float(np.max(matrix)) / 2.0 if matrix.size else 0.0
+    for row in range(matrix.shape[0]):
+        for column in range(matrix.shape[1]):
+            color = "white" if matrix[row, column] > threshold else "black"
+            ax.text(column, row, str(matrix[row, column]), ha="center", va="center", color=color)
+    fig.colorbar(image, ax=ax)
+    fig.tight_layout()
+
+    if show:
+        plt.show()
+    return fig, ax
+
+
+def plot_feature_importance(
+    importances: pd.Series | Mapping[str, float],
+    *,
+    top_n: int = 20,
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot feature importances sorted by absolute importance."""
+    if top_n <= 0:
+        raise ValueError("top_n must be positive.")
+    series = pd.Series(importances, dtype=float).dropna()
+    if series.empty:
+        raise ValueError("At least one feature importance value is required.")
+    series = series.reindex(series.abs().sort_values(ascending=False).index).head(top_n)
+    series = series.sort_values()
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, max(3, 0.3 * len(series))))
+    else:
+        fig = ax.figure
+
+    ax.barh(series.index.astype(str), series.values)
+    ax.set_title("Feature importance")
+    ax.set_xlabel("Importance")
+    ax.grid(True, axis="x", alpha=0.3)
+    fig.tight_layout()
+
+    if show:
+        plt.show()
+    return fig, ax
+
+
+def save_figure(
+    fig: Figure,
+    figures_dir: str | Path = "reports/figures",
+    *,
+    stem: str,
+    run_date: date | str | None = None,
+    dpi: int = 150,
+) -> Path:
+    """Save a figure under a date-stamped reports/figures directory."""
+    if dpi <= 0:
+        raise ValueError("dpi must be positive.")
+    if run_date is None:
+        date_part = date.today().isoformat()
+    elif isinstance(run_date, date):
+        date_part = run_date.isoformat()
+    else:
+        date_part = run_date
+
+    output_dir = Path(figures_dir) / date_part
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{_safe_filename(stem)}.png"
+    fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    return output_path
+
+
 def _time_plot_title(
     record: SignalRecord,
     start_seconds: float | None,
@@ -392,3 +577,11 @@ def _seconds_to_index(record: SignalRecord, seconds: float) -> int:
 
 def _clamp_start(start_seconds: float, duration_seconds: float, window_seconds: float) -> float:
     return min(max(start_seconds, 0.0), max(duration_seconds - window_seconds, 0.0))
+
+
+def _safe_filename(value: str) -> str:
+    safe = "".join(character if character.isalnum() or character in "-_" else "_" for character in value)
+    safe = safe.strip("_")
+    if not safe:
+        raise ValueError("stem must contain at least one filename-safe character.")
+    return safe

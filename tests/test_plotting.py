@@ -9,10 +9,15 @@ import numpy as np
 import pytest
 
 from signal_processing_prep.plotting import (
+    plot_confusion_matrix,
+    plot_feature_distribution,
+    plot_feature_importance,
     plot_frequency_spectra,
     plot_frequency_spectrum,
+    plot_spectrogram,
     plot_time_signal,
     plot_time_signal_navigator,
+    save_figure,
 )
 from signal_processing_prep.synthetic import sine_wave
 
@@ -210,3 +215,64 @@ def test_plot_frequency_spectrum_rejects_invalid_arguments() -> None:
 
     with pytest.raises(ValueError, match="At least one"):
         plot_frequency_spectra([])
+
+
+def test_plot_spectrogram_returns_labeled_figure() -> None:
+    """A spectrogram plot returns labeled axes and a colorbar."""
+    record = sine_wave(frequency_hz=20.0, duration_seconds=1.0, sampling_rate_hz=200.0)
+
+    fig, ax = plot_spectrogram(record, window_seconds=0.2, step_seconds=0.1)
+
+    assert fig is ax.figure
+    assert ax.get_xlabel() == "Time [s]"
+    assert ax.get_ylabel() == "Frequency [Hz]"
+    assert "spectrogram" in ax.get_title()
+    assert len(fig.axes) == 2
+    plt.close(fig)
+
+
+def test_plot_feature_distribution_groups_by_label() -> None:
+    """Feature distributions can compare labels."""
+    import pandas as pd
+
+    features = pd.DataFrame(
+        {
+            "rms": [1.0, 1.2, 3.0, 3.2],
+            "label": ["normal", "normal", "fault", "fault"],
+        }
+    )
+
+    fig, ax = plot_feature_distribution(features, "rms")
+
+    assert ax.get_xlabel() == "rms"
+    assert ax.get_ylabel() == "Count"
+    assert ax.get_legend() is not None
+    plt.close(fig)
+
+
+def test_plot_confusion_matrix_and_feature_importance() -> None:
+    """Model diagnostic plots expose expected labels."""
+    import pandas as pd
+
+    matrix_fig, matrix_ax = plot_confusion_matrix(np.array([[2, 1], [0, 3]]), ["a", "b"])
+    assert matrix_ax.get_xlabel() == "Predicted label"
+    assert len(matrix_ax.texts) == 4
+
+    importance_fig, importance_ax = plot_feature_importance(pd.Series({"rms": 0.8, "zcr": 0.2}))
+    assert importance_ax.get_xlabel() == "Importance"
+    assert len(importance_ax.patches) == 2
+    plt.close(matrix_fig)
+    plt.close(importance_fig)
+
+
+def test_save_figure_writes_date_stamped_png(tmp_path) -> None:
+    """Figures are saved under reports/figures/date-style directories."""
+    record = sine_wave()
+    fig, _ = plot_time_signal(record)
+
+    path = save_figure(fig, tmp_path, stem="Raw Signal", run_date="2026-05-19")
+
+    assert path.exists()
+    assert path.parent == tmp_path / "2026-05-19"
+    assert path.name == "Raw_Signal.png"
+    plt.close(fig)
