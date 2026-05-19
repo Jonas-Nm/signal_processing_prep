@@ -77,7 +77,7 @@ def psd(
     """Estimate power spectral density using Welch's method."""
     values, sampling_rate = _values_and_sampling_rate(signal, sampling_rate_hz)
     if nperseg is None:
-        nperseg = min(256, values.size)
+        nperseg = min(1024, values.size)
     if nperseg <= 0:
         raise ValueError("nperseg must be positive.")
 
