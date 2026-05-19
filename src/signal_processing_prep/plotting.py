@@ -414,6 +414,55 @@ def plot_feature_importance(
     return fig, ax
 
 
+def plot_anomaly_scores(
+    predictions: pd.DataFrame,
+    *,
+    score_column: str = "anomaly_score",
+    name_column: str = "record_name",
+    top_n: int | None = 10,
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot anomaly scores sorted from most to least anomalous."""
+    if score_column not in predictions.columns:
+        raise ValueError(f"Score column not found: {score_column}")
+    if top_n is not None and top_n <= 0:
+        raise ValueError("top_n must be positive.")
+
+    ranked = predictions.sort_values(score_column, ascending=False)
+    if top_n is not None:
+        ranked = ranked.head(top_n)
+    scores = pd.to_numeric(ranked[score_column], errors="coerce")
+    if scores.isna().all():
+        raise ValueError("Anomaly scores must contain at least one numeric value.")
+    if name_column in ranked.columns:
+        fallback_labels = ranked["row_index"] if "row_index" in ranked.columns else ranked.index
+        labels = ranked[name_column].fillna(pd.Series(fallback_labels, index=ranked.index)).astype(str)
+    elif "row_index" in ranked.columns:
+        labels = ranked["row_index"].astype(str)
+    else:
+        labels = ranked.index.astype(str)
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, max(3, 0.3 * len(ranked))))
+    else:
+        fig = ax.figure
+
+    y_positions = np.arange(len(ranked))
+    ax.barh(y_positions, scores.to_numpy())
+    ax.set_yticks(y_positions, labels=labels)
+    ax.invert_yaxis()
+    ax.set_title("Top anomaly scores")
+    ax.set_xlabel("Anomaly score")
+    ax.set_ylabel("Record or row")
+    ax.grid(True, axis="x", alpha=0.3)
+    fig.tight_layout()
+
+    if show:
+        plt.show()
+    return fig, ax
+
+
 def save_figure(
     fig: Figure,
     figures_dir: str | Path = "reports/figures",

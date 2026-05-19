@@ -10,10 +10,13 @@ from signal_processing_prep.features import (
 )
 from signal_processing_prep.modeling import (
     ModelEvaluation,
+    anomaly_summary_text,
     run_isolation_forest,
     run_supervised_baselines,
+    top_anomalies,
 )
 from signal_processing_prep.plotting import (
+    plot_anomaly_scores,
     plot_confusion_matrix,
     plot_feature_distribution,
     plot_feature_importance,
@@ -58,6 +61,7 @@ __all__ = [
     "apply_configured_filter",
     "apply_filter",
     "apply_window",
+    "anomaly_summary_text",
     "assess_dataset_quality",
     "assess_signal_quality",
     "extract_features",
@@ -67,6 +71,7 @@ __all__ = [
     "load_config",
     "load_signal_file",
     "plot_confusion_matrix",
+    "plot_anomaly_scores",
     "plot_feature_distribution",
     "plot_feature_importance",
     "plot_spectrogram",
@@ -76,4 +81,5 @@ __all__ = [
     "save_markdown_summary",
     "segment_dataset",
     "segment_signal",
+    "top_anomalies",
 ]

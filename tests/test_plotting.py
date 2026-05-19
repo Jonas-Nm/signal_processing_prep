@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from signal_processing_prep.plotting import (
+    plot_anomaly_scores,
     plot_confusion_matrix,
     plot_feature_distribution,
     plot_feature_importance,
@@ -263,6 +264,42 @@ def test_plot_confusion_matrix_and_feature_importance() -> None:
     assert len(importance_ax.patches) == 2
     plt.close(matrix_fig)
     plt.close(importance_fig)
+
+
+def test_plot_anomaly_scores_ranks_scores() -> None:
+    """Anomaly-score plots show ranked inspection candidates."""
+    import pandas as pd
+
+    predictions = pd.DataFrame(
+        {
+            "row_index": [0, 1, 2],
+            "record_name": ["a", "b", "c"],
+            "anomaly_score": [0.1, 2.0, 0.5],
+        }
+    )
+
+    fig, ax = plot_anomaly_scores(predictions, top_n=2)
+
+    assert ax.get_xlabel() == "Anomaly score"
+    assert ax.get_ylabel() == "Record or row"
+    assert len(ax.patches) == 2
+    assert [tick.get_text() for tick in ax.get_yticklabels()] == ["b", "c"]
+    plt.close(fig)
+
+
+def test_plot_anomaly_scores_falls_back_to_dataframe_index() -> None:
+    """Generic score tables do not need row_index metadata."""
+    import pandas as pd
+
+    predictions = pd.DataFrame(
+        {"anomaly_score": [0.1, 2.0, 0.5]},
+        index=["first", "second", "third"],
+    )
+
+    fig, ax = plot_anomaly_scores(predictions, top_n=2)
+
+    assert [tick.get_text() for tick in ax.get_yticklabels()] == ["second", "third"]
+    plt.close(fig)
 
 
 def test_save_figure_writes_date_stamped_png(tmp_path) -> None:
