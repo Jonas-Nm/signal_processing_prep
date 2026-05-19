@@ -4,12 +4,171 @@ import numpy as np
 import pytest
 
 from signal_processing_prep.features import (
+    FeatureExtractionConfig,
     FrequencyBand,
     SlidingWindowConfig,
+    extract_features,
+    frequency_bands_from_mapping,
     sliding_window_features,
 )
 from signal_processing_prep.records import SignalRecord
 from signal_processing_prep.synthetic import sine_wave, transient_burst
+
+
+def test_extract_features_returns_one_row_per_signal_record() -> None:
+    """Dataset feature extraction returns one row per input record."""
+    records = [
+        sine_wave(
+            frequency_hz=10.0,
+            duration_seconds=1.0,
+            sampling_rate_hz=200.0,
+            label="normal",
+            name="tone-10",
+        ),
+        sine_wave(
+            frequency_hz=30.0,
+            duration_seconds=1.0,
+            sampling_rate_hz=200.0,
+            label="fault",
+            name="tone-30",
+        ),
+    ]
+    config = FeatureExtractionConfig(
+        frequency_bands=(FrequencyBand("low", 0.0, 20.0), FrequencyBand("mid", 20.0, 60.0)),
+        spectrogram_window_seconds=0.2,
+    )
+
+    features = extract_features(records, config)
+
+    assert features.shape[0] == 2
+    assert features["record_name"].tolist() == ["tone-10", "tone-30"]
+    assert features["label"].tolist() == ["normal", "fault"]
+    assert features["dominant_frequency_hz"].tolist() == pytest.approx([10.0, 30.0])
+
+
+def test_extract_features_includes_expected_phase_five_columns() -> None:
+    """Record-level features include time, frequency, and time-frequency summaries."""
+    record = sine_wave(
+        frequency_hz=25.0,
+        duration_seconds=1.0,
+        sampling_rate_hz=200.0,
+        amplitude=2.0,
+    )
+
+    features = extract_features(
+        [record],
+        FeatureExtractionConfig(frequency_bands=(FrequencyBand("tone", 20.0, 30.0),)),
+    )
+
+    expected_columns = {
+        "mean",
+        "std",
+        "rms",
+        "min",
+        "max",
+        "peak_to_peak",
+        "crest_factor",
+        "skewness",
+        "kurtosis",
+        "zero_crossing_rate",
+        "dominant_frequency_hz",
+        "spectral_centroid_hz",
+        "spectral_bandwidth_hz",
+        "spectral_rolloff_85_hz",
+        "spectral_flatness",
+        "spectral_entropy",
+        "band_energy_tone",
+        "mean_spectrogram_energy",
+        "max_spectrogram_energy",
+        "high_frequency_transient_energy",
+    }
+    assert expected_columns.issubset(features.columns)
+    assert features.loc[0, "rms"] == pytest.approx(np.sqrt(2.0), rel=1e-3)
+    assert features.loc[0, "band_energy_tone"] > 1.5
+
+
+def test_extract_features_preserves_missing_labels_for_small_dataset() -> None:
+    """Small unlabeled datasets are handled without special casing."""
+    record = SignalRecord(values=np.ones(16), sampling_rate_hz=16.0, name="constant")
+
+    features = extract_features([record])
+
+    assert features.shape[0] == 1
+    assert features.loc[0, "record_name"] == "constant"
+    assert features["label"].isna().all()
+    assert features.loc[0, "duration_seconds"] == 1.0
+
+
+def test_extract_features_keeps_out_of_range_band_column() -> None:
+    """Generic high-frequency bands remain explicit when above Nyquist."""
+    record = sine_wave(frequency_hz=5.0, duration_seconds=1.0, sampling_rate_hz=50.0)
+
+    features = extract_features(
+        [record],
+        FeatureExtractionConfig(frequency_bands=(FrequencyBand("too_high", 30.0, 40.0),)),
+    )
+
+    assert "band_energy_too_high" in features.columns
+    assert np.isnan(features.loc[0, "band_energy_too_high"])
+
+
+def test_extract_features_rejects_invalid_config() -> None:
+    """Invalid record-level feature settings fail clearly."""
+    record = sine_wave(duration_seconds=1.0)
+
+    with pytest.raises(ValueError, match="spectrogram_window_seconds must be positive"):
+        extract_features(
+            [record],
+            FeatureExtractionConfig(spectrogram_window_seconds=0.0),
+        )
+
+    with pytest.raises(ValueError, match="spectrogram_step_seconds must be positive"):
+        extract_features(
+            [record],
+            FeatureExtractionConfig(spectrogram_step_seconds=0.0),
+        )
+
+    with pytest.raises(ValueError, match="high_frequency_cutoff_hz must be non-negative"):
+        extract_features(
+            [record],
+            FeatureExtractionConfig(high_frequency_cutoff_hz=-1.0),
+        )
+
+    with pytest.raises(ValueError, match="low_hz must be non-negative"):
+        extract_features(
+            [record],
+            FeatureExtractionConfig(frequency_bands=(FrequencyBand("bad", -1.0, 10.0),)),
+        )
+
+    with pytest.raises(ValueError, match="high_hz must be greater"):
+        extract_features(
+            [record],
+            FeatureExtractionConfig(frequency_bands=(FrequencyBand("bad", 10.0, 10.0),)),
+        )
+
+
+def test_extract_features_reports_nan_when_valid_step_exceeds_short_record_window() -> None:
+    """Valid global spectrogram settings remain usable for very short records."""
+    record = sine_wave(duration_seconds=0.05, sampling_rate_hz=1000.0)
+
+    features = extract_features(
+        [record],
+        FeatureExtractionConfig(
+            spectrogram_window_seconds=0.1,
+            spectrogram_step_seconds=0.075,
+        ),
+    )
+
+    assert np.isnan(features.loc[0, "mean_spectrogram_energy"])
+    assert np.isnan(features.loc[0, "max_spectrogram_energy"])
+    assert np.isnan(features.loc[0, "high_frequency_transient_energy"])
+
+
+def test_frequency_bands_from_mapping_converts_config_shape() -> None:
+    """Config frequency-band mappings can feed feature extraction directly."""
+    bands = frequency_bands_from_mapping({"bearing": (100.0, 300.0)})
+
+    assert bands == (FrequencyBand("bearing", 100.0, 300.0),)
 
 
 def test_sliding_window_features_returns_one_row_per_window() -> None:

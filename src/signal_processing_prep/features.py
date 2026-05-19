@@ -19,6 +19,7 @@ from signal_processing_prep.frequency_domain import (
     spectral_rolloff,
 )
 from signal_processing_prep.records import SignalRecord
+from signal_processing_prep.time_frequency import spectrogram_analysis
 from signal_processing_prep.time_domain import (
     crest_factor,
     kurtosis,
@@ -38,6 +39,16 @@ class FrequencyBand:
 
 
 @dataclass(frozen=True)
+class FeatureExtractionConfig:
+    """Configuration for one-row-per-record feature extraction."""
+
+    frequency_bands: Sequence[FrequencyBand] = field(default_factory=tuple)
+    spectrogram_window_seconds: float = 0.1
+    spectrogram_step_seconds: float | None = None
+    high_frequency_cutoff_hz: float | None = None
+
+
+@dataclass(frozen=True)
 class SlidingWindowConfig:
     """Configuration for time-localized feature extraction."""
 
@@ -48,6 +59,24 @@ class SlidingWindowConfig:
     include_frequency_domain: bool = True
     frequency_window: str | tuple[str, float] | None = "hann"
     normalize_frequency_window_power: bool = True
+
+
+def extract_features(
+    records: Sequence[SignalRecord],
+    config: FeatureExtractionConfig | None = None,
+) -> pd.DataFrame:
+    """Extract one row of interpretable features per signal record.
+
+    Frequency bands are always represented as columns. Bands that sit entirely
+    above a record's Nyquist frequency are reported as ``NaN`` for that record,
+    which keeps generic configurations usable across mixed sampling rates.
+    """
+    if config is None:
+        config = FeatureExtractionConfig()
+    _validate_feature_config(config)
+
+    rows = [_record_features(record, config) for record in records]
+    return pd.DataFrame(rows)
 
 
 def sliding_window_features(
@@ -107,6 +136,42 @@ def sliding_window_features(
     return pd.DataFrame(rows)
 
 
+def frequency_bands_from_mapping(
+    bands_hz: dict[str, tuple[float, float]],
+) -> tuple[FrequencyBand, ...]:
+    """Convert a configuration mapping into ``FrequencyBand`` objects."""
+    return tuple(
+        FrequencyBand(name=name, low_hz=low_hz, high_hz=high_hz)
+        for name, (low_hz, high_hz) in bands_hz.items()
+    )
+
+
+def _record_features(
+    record: SignalRecord,
+    config: FeatureExtractionConfig,
+) -> dict[str, float | str | None]:
+    row: dict[str, float | str | None] = {
+        "record_name": record.name,
+        "label": record.label,
+        "sampling_rate_hz": record.sampling_rate_hz,
+        "n_samples": float(record.n_samples),
+        "duration_seconds": record.duration_seconds,
+    }
+    row.update(_time_domain_features(record.values, record.sampling_rate_hz))
+    row.update(
+        _frequency_domain_features(
+            record.values,
+            record.sampling_rate_hz,
+            config.frequency_bands,
+            frequency_window=None,
+            normalize_window_power=False,
+        )
+    )
+    row["spectral_entropy"] = _spectral_entropy(record)
+    row.update(_time_frequency_features(record, config))
+    return row
+
+
 def _time_domain_features(
     values: np.ndarray,
     sampling_rate_hz: float,
@@ -146,13 +211,99 @@ def _frequency_domain_features(
         "spectral_flatness": spectral_flatness(spectrum),
     }
     for band in frequency_bands:
-        features[f"band_energy_{band.name}"] = band_energy(
+        features[f"band_energy_{band.name}"] = _safe_band_energy(
             frequency_values,
-            low_hz=band.low_hz,
-            high_hz=band.high_hz,
-            sampling_rate_hz=sampling_rate_hz,
+            sampling_rate_hz,
+            band,
         )
     return features
+
+
+def _safe_band_energy(
+    values: np.ndarray,
+    sampling_rate_hz: float,
+    band: FrequencyBand,
+) -> float:
+    nyquist_hz = sampling_rate_hz / 2.0
+    if band.low_hz >= nyquist_hz:
+        return float("nan")
+    return band_energy(
+        values,
+        low_hz=band.low_hz,
+        high_hz=min(band.high_hz, nyquist_hz),
+        sampling_rate_hz=sampling_rate_hz,
+    )
+
+
+def _spectral_entropy(record: SignalRecord) -> float:
+    spectrum = fft_magnitude(record)
+    weights = np.square(spectrum.magnitudes)
+    total = float(np.sum(weights))
+    if total == 0.0:
+        return 0.0
+    probabilities = weights / total
+    positive_probabilities = probabilities[probabilities > 0.0]
+    entropy = -float(np.sum(positive_probabilities * np.log2(positive_probabilities)))
+    max_entropy = np.log2(weights.size) if weights.size > 1 else 1.0
+    return float(entropy / max_entropy)
+
+
+def _time_frequency_features(
+    record: SignalRecord,
+    config: FeatureExtractionConfig,
+) -> dict[str, float]:
+    window_seconds = min(config.spectrogram_window_seconds, record.duration_seconds)
+    if _spectrogram_step_exceeds_window(config.spectrogram_step_seconds, window_seconds):
+        return {
+            "mean_spectrogram_energy": float("nan"),
+            "max_spectrogram_energy": float("nan"),
+            "high_frequency_transient_energy": float("nan"),
+        }
+    spectrogram = spectrogram_analysis(
+        record,
+        window_seconds=window_seconds,
+        step_seconds=config.spectrogram_step_seconds,
+    )
+
+    power = spectrogram.power
+    high_frequency_cutoff = config.high_frequency_cutoff_hz
+    if high_frequency_cutoff is None:
+        high_frequency_cutoff = 0.75 * (record.sampling_rate_hz / 2.0)
+    high_frequency_mask = spectrogram.frequencies_hz >= high_frequency_cutoff
+    if np.any(high_frequency_mask):
+        high_frequency_energy = float(np.max(np.sum(power[high_frequency_mask, :], axis=0)))
+    else:
+        high_frequency_energy = 0.0
+
+    return {
+        "mean_spectrogram_energy": float(np.mean(power)),
+        "max_spectrogram_energy": float(np.max(power)),
+        "high_frequency_transient_energy": high_frequency_energy,
+    }
+
+
+def _validate_feature_config(config: FeatureExtractionConfig) -> None:
+    if config.spectrogram_window_seconds <= 0:
+        raise ValueError("spectrogram_window_seconds must be positive.")
+    if config.spectrogram_step_seconds is not None and config.spectrogram_step_seconds <= 0:
+        raise ValueError("spectrogram_step_seconds must be positive.")
+    if config.high_frequency_cutoff_hz is not None and config.high_frequency_cutoff_hz < 0:
+        raise ValueError("high_frequency_cutoff_hz must be non-negative.")
+
+    for band in config.frequency_bands:
+        if band.low_hz < 0:
+            raise ValueError(f"Frequency band '{band.name}' low_hz must be non-negative.")
+        if band.high_hz <= band.low_hz:
+            raise ValueError(
+                f"Frequency band '{band.name}' high_hz must be greater than low_hz."
+            )
+
+
+def _spectrogram_step_exceeds_window(
+    step_seconds: float | None,
+    window_seconds: float,
+) -> bool:
+    return step_seconds is not None and step_seconds > window_seconds
 
 
 def _apply_frequency_window(
