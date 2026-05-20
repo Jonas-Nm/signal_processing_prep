@@ -65,6 +65,7 @@ def apply_filter(record: SignalRecord, spec: FilterSpec) -> SignalRecord:
         metadata={
             **record.metadata,
             "preprocessing": {
+                **_preprocessing_metadata(record),
                 "filter_kind": kind,
                 "low_cut_hz": spec.low_cut_hz,
                 "high_cut_hz": spec.high_cut_hz,
@@ -96,6 +97,64 @@ def apply_configured_filter(
     )
 
 
+def interpolate_missing_values(
+    record: SignalRecord,
+    *,
+    method: str = "linear",
+    max_missing_fraction: float = 0.01,
+) -> SignalRecord:
+    """Interpolate isolated non-finite samples in a signal record.
+
+    This helper is intended for small, explicit repairs before frequency-domain
+    analysis. Larger gaps should usually be segmented, skipped, or investigated
+    rather than silently filled.
+    """
+    if method != "linear":
+        raise ValueError("Only linear interpolation is currently supported.")
+    if not 0.0 <= max_missing_fraction <= 1.0:
+        raise ValueError("max_missing_fraction must be between 0 and 1.")
+
+    values = record.values
+    finite_mask = np.isfinite(values)
+    missing_count = int(values.size - np.count_nonzero(finite_mask))
+    missing_fraction = float(missing_count / values.size)
+    if missing_count == 0:
+        return record
+    if missing_fraction > max_missing_fraction:
+        raise ValueError(
+            "Missing fraction exceeds max_missing_fraction; skip, segment, or "
+            "choose a more explicit repair strategy."
+        )
+    if not np.any(finite_mask):
+        raise ValueError("Cannot interpolate a record with no finite samples.")
+
+    sample_indices = np.arange(values.size, dtype=np.float64)
+    interpolated_values = np.interp(
+        sample_indices,
+        sample_indices[finite_mask],
+        values[finite_mask],
+    )
+
+    return SignalRecord(
+        values=np.asarray(interpolated_values, dtype=np.float64),
+        sampling_rate_hz=record.sampling_rate_hz,
+        label=record.label,
+        name=record.name,
+        metadata={
+            **record.metadata,
+            "preprocessing": {
+                **_preprocessing_metadata(record),
+                "missing_value_interpolation": {
+                    "method": method,
+                    "missing_count": missing_count,
+                    "missing_fraction": missing_fraction,
+                    "max_missing_fraction": max_missing_fraction,
+                },
+            },
+        },
+    )
+
+
 def apply_window(
     record: SignalRecord,
     *,
@@ -109,6 +168,10 @@ def apply_window(
         if mean_square > 0.0:
             weights = weights / np.sqrt(mean_square)
     windowed_values = record.values * weights
+    window_metadata = {
+        "name": _window_name(window),
+        "normalize_power": normalize_power,
+    }
     return SignalRecord(
         values=windowed_values,
         sampling_rate_hz=record.sampling_rate_hz,
@@ -116,10 +179,11 @@ def apply_window(
         name=record.name,
         metadata={
             **record.metadata,
-            "window": {
-                "name": _window_name(window),
-                "normalize_power": normalize_power,
+            "preprocessing": {
+                **_preprocessing_metadata(record),
+                "window": window_metadata,
             },
+            "window": window_metadata,
         },
     )
 
@@ -207,6 +271,12 @@ def _validate_cutoff(cutoff_hz: float | None, nyquist_hz: float, name: str) -> N
         raise ValueError(f"{name} must be positive.")
     if cutoff_hz >= nyquist_hz:
         raise ValueError(f"{name} must be below the Nyquist frequency.")
+
+
+def _preprocessing_metadata(record: SignalRecord) -> dict[str, object]:
+    metadata = record.metadata.get("preprocessing")
+    return dict(metadata) if isinstance(metadata, dict) else {}
+
 
 def _seconds_to_samples(seconds: float, sampling_rate_hz: float, *, field_name: str) -> int:
     if seconds <= 0:

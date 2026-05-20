@@ -13,6 +13,7 @@ from signal_processing_prep.frequency_domain import (
     spectral_flatness,
     spectral_rolloff,
 )
+from signal_processing_prep.records import SignalRecord
 from signal_processing_prep.synthetic import noisy_sine_wave, sine_wave
 
 
@@ -95,6 +96,20 @@ def test_raw_frequency_helpers_require_sampling_rate() -> None:
 
     with pytest.raises(ValueError, match="sampling_rate_hz is required"):
         band_energy(values, low_hz=1.0, high_hz=2.0)
+
+
+def test_frequency_helpers_reject_nonfinite_samples_before_dsp() -> None:
+    """Frequency-domain helpers fail clearly for NaN or Inf samples."""
+    record = SignalRecord(values=np.array([0.0, np.nan, 1.0]), sampling_rate_hz=10.0)
+
+    with pytest.raises(ValueError, match="non-finite samples"):
+        fft_magnitude(record)
+
+    with pytest.raises(ValueError, match="non-finite samples"):
+        psd(np.array([0.0, np.inf, 1.0]), sampling_rate_hz=10.0)
+
+    with pytest.raises(ValueError, match="non-finite samples"):
+        band_energy(record, low_hz=1.0, high_hz=2.0)
 
 
 def test_frequency_helpers_handle_tiny_signals() -> None:

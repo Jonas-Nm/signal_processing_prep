@@ -10,6 +10,7 @@ from signal_processing_prep.preprocessing import (
     apply_configured_filter,
     apply_filter,
     apply_window,
+    interpolate_missing_values,
     segment_dataset,
     segment_signal,
 )
@@ -29,6 +30,30 @@ def test_lowpass_filter_reduces_high_frequency_energy() -> None:
     assert filtered.sampling_rate_hz == mixed.sampling_rate_hz
     assert band_energy(filtered, low_hz=190.0, high_hz=210.0) < 0.05
     assert filtered.metadata["preprocessing"]["filter_kind"] == "lowpass"
+
+
+def test_filter_preserves_existing_preprocessing_metadata() -> None:
+    """Filtering appends to preprocessing history instead of replacing it."""
+    record = SignalRecord(
+        values=np.array([0.0, np.nan, 0.5, 0.0, -0.5, 0.0, 0.5, 0.0, -0.5, 0.0]),
+        sampling_rate_hz=10.0,
+        name="dirty",
+    )
+    cleaned = interpolate_missing_values(record, max_missing_fraction=0.2)
+
+    filtered = apply_filter(
+        cleaned,
+        FilterSpec(
+            kind="lowpass",
+            high_cut_hz=2.0,
+            order=1,
+            zero_phase=False,
+        ),
+    )
+
+    preprocessing = filtered.metadata["preprocessing"]
+    assert preprocessing["missing_value_interpolation"]["missing_count"] == 1
+    assert preprocessing["filter_kind"] == "lowpass"
 
 
 def test_bandpass_filter_keeps_target_band() -> None:
@@ -89,6 +114,55 @@ def test_apply_window_multiplies_values_and_records_metadata() -> None:
     assert windowed.values[0] == pytest.approx(0.0)
     assert windowed.values[4] == pytest.approx(1.0)
     assert windowed.metadata["window"]["name"] == "hann"
+    assert windowed.metadata["preprocessing"]["window"]["name"] == "hann"
+
+
+def test_apply_window_preserves_existing_preprocessing_metadata() -> None:
+    """Windowing records consistent preprocessing metadata without losing history."""
+    record = SignalRecord(
+        values=np.array([1.0, np.nan, 3.0, 4.0]),
+        sampling_rate_hz=4.0,
+        metadata={"preprocessing": {"source_step": "manual"}},
+    )
+    cleaned = interpolate_missing_values(record, max_missing_fraction=0.25)
+
+    windowed = apply_window(cleaned, window="hann")
+
+    preprocessing = windowed.metadata["preprocessing"]
+    assert preprocessing["source_step"] == "manual"
+    assert preprocessing["missing_value_interpolation"]["missing_count"] == 1
+    assert preprocessing["window"]["name"] == "hann"
+
+
+def test_interpolate_missing_values_fills_small_gaps_and_records_metadata() -> None:
+    """Small missing-value repairs are explicit and preserve record identity."""
+    record = SignalRecord(
+        values=np.array([0.0, np.nan, 2.0, np.inf, 4.0]),
+        sampling_rate_hz=10.0,
+        label="normal",
+        name="dirty",
+        metadata={"sensor": "accel"},
+    )
+
+    cleaned = interpolate_missing_values(record, max_missing_fraction=0.5)
+
+    np.testing.assert_allclose(cleaned.values, [0.0, 1.0, 2.0, 3.0, 4.0])
+    assert cleaned.sampling_rate_hz == record.sampling_rate_hz
+    assert cleaned.label == record.label
+    assert cleaned.name == record.name
+    assert cleaned.metadata["sensor"] == "accel"
+    interpolation = cleaned.metadata["preprocessing"]["missing_value_interpolation"]
+    assert interpolation["method"] == "linear"
+    assert interpolation["missing_count"] == 2
+    assert interpolation["missing_fraction"] == pytest.approx(0.4)
+
+
+def test_interpolate_missing_values_refuses_large_missing_fraction() -> None:
+    """Interpolation refuses records that exceed the configured repair budget."""
+    record = SignalRecord(values=np.array([0.0, np.nan, np.nan, 3.0]), sampling_rate_hz=4.0)
+
+    with pytest.raises(ValueError, match="Missing fraction exceeds"):
+        interpolate_missing_values(record, max_missing_fraction=0.25)
 
 
 def test_segment_signal_returns_explicit_windows() -> None:

@@ -44,6 +44,7 @@ from signal_processing_prep.preprocessing import (
     apply_configured_filter,
     apply_filter,
     apply_window,
+    interpolate_missing_values,
     segment_dataset,
     segment_signal,
 )
@@ -89,6 +90,7 @@ __all__ = [
     "frequency_bands_from_mapping",
     "dataset_overview_from_records",
     "generate_markdown_summary",
+    "interpolate_missing_values",
     "load_signal_dataset",
     "load_config",
     "load_signal_file",

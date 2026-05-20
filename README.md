@@ -92,6 +92,12 @@ If CSV files contain a time-like column such as `time`, `timestamp`, or
 `time_seconds`, the loader infers the sampling rate and stores timing jitter,
 gap counts, and sampling-rate mismatch indicators in record metadata.
 
+For timestamped files with noticeable jitter or gaps, treat the inferred
+sampling rate as an acquisition assumption to review before FFT, PSD, or
+spectrogram analysis. The toolkit intentionally keeps irregular-time support
+lightweight in version `0.1.0`: it reports timing diagnostics but does not
+silently resample irregular records.
+
 ### 3. Check Quality Before Processing
 
 Quality checks are meant to reveal assumptions before they become modeling
@@ -117,6 +123,26 @@ print(quality[[
 Treat `issues` as a review checklist. For a first pass, skip or fix records
 with non-finite samples, severe clipping, very short duration, or suspicious
 time-axis metadata.
+
+Frequency-domain and time-frequency helpers reject `NaN` and `Inf` samples
+before computing FFT, PSD, STFT, spectrograms, Hilbert features, or wavelet
+scalograms. For small isolated gaps, repair values explicitly and keep that
+choice visible in metadata:
+
+```python
+from signal_processing_prep import interpolate_missing_values
+
+clean_record = interpolate_missing_values(
+    record,
+    method="linear",
+    max_missing_fraction=0.01,
+)
+```
+
+Use interpolation only when the missing fraction is small and the assumption is
+defensible. For long gaps, severe timestamp irregularity, or heavily repaired
+signals, segment or skip the affected region rather than making spectral
+claims from silently filled data.
 
 ### 4. Plot And Inspect Signals
 

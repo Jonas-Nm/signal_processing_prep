@@ -9,6 +9,7 @@ from numpy.typing import ArrayLike, NDArray
 import pywt
 from scipy import signal as scipy_signal
 
+from signal_processing_prep._validation import validate_finite_signal_values
 from signal_processing_prep.records import SignalRecord
 
 
@@ -214,6 +215,7 @@ def _values_and_sampling_rate(
         raise ValueError("Signal values must be one-dimensional.")
     if values.size == 0:
         raise ValueError("Signal values must not be empty.")
+    validate_finite_signal_values(values)
     resolved_sampling_rate = (
         signal.sampling_rate_hz if isinstance(signal, SignalRecord) else sampling_rate_hz
     )

@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from signal_processing_prep.records import SignalRecord
 from signal_processing_prep.synthetic import sine_wave, transient_burst
 from signal_processing_prep.time_frequency import (
     hilbert_analysis,
@@ -102,3 +103,20 @@ def test_time_frequency_helpers_reject_invalid_window_arguments() -> None:
 
     with pytest.raises(ValueError, match="Nyquist"):
         morlet_wavelet_scalogram(record, frequencies_hz=[60.0])
+
+
+def test_time_frequency_helpers_reject_nonfinite_samples_before_dsp() -> None:
+    """Time-frequency helpers fail clearly for NaN or Inf samples."""
+    record = SignalRecord(values=np.array([0.0, np.nan, 1.0, 0.0]), sampling_rate_hz=10.0)
+
+    with pytest.raises(ValueError, match="non-finite samples"):
+        stft_analysis(record, window_seconds=0.2)
+
+    with pytest.raises(ValueError, match="non-finite samples"):
+        spectrogram_analysis(record, window_seconds=0.2)
+
+    with pytest.raises(ValueError, match="non-finite samples"):
+        hilbert_analysis(record)
+
+    with pytest.raises(ValueError, match="non-finite samples"):
+        morlet_wavelet_scalogram(record, frequencies_hz=[1.0])
