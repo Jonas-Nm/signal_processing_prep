@@ -265,6 +265,8 @@ def plot_spectrogram(
     window_seconds: float = 0.1,
     step_seconds: float | None = None,
     max_frequency_hz: float | None = None,
+    vmin_db: float | None = None, 
+    vmax_db: float | None = None, 
     ax: Axes | None = None,
     show: bool = False,
 ) -> tuple[Figure, Axes]:
@@ -293,6 +295,8 @@ def plot_spectrogram(
         frequencies,
         10.0 * np.log10(np.maximum(power, 1e-24)),
         shading="auto",
+        vmin=vmin_db,
+        vmax=vmax_db,
     )
     ax.set_title(f"{record.name or 'Signal'} - spectrogram")
     ax.set_xlabel("Time [s]")
