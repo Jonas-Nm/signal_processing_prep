@@ -32,6 +32,7 @@ data/processed/*
 reports/figures/*
 reports/summaries/*
 !data/raw/.gitkeep
+!data/raw/vibration_anomaly_single_record.csv
 !data/interim/.gitkeep
 !data/processed/.gitkeep
 !reports/figures/.gitkeep
