@@ -16,7 +16,7 @@ from matplotlib.widgets import Button, Slider
 
 from signal_processing_prep.frequency_domain import fft_magnitude, psd
 from signal_processing_prep.records import SignalRecord
-from signal_processing_prep.time_frequency import spectrogram_analysis
+from signal_processing_prep.time_frequency import morlet_wavelet_scalogram, spectrogram_analysis
 
 
 def plot_time_signal(
@@ -367,6 +367,7 @@ def plot_spectrogram(
     max_frequency_hz: float | None = None,
     vmin_db: float | None = None, 
     vmax_db: float | None = None, 
+    frequency_scale: str = "linear",
     ax: Axes | None = None,
     show: bool = False,
 ) -> tuple[Figure, Axes]:
@@ -384,6 +385,7 @@ def plot_spectrogram(
         mask = frequencies <= max_frequency_hz
         frequencies = frequencies[mask]
         power = power[mask, :]
+    frequencies, power = _apply_frequency_scale(frequencies, power, frequency_scale)
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 4))
@@ -401,6 +403,7 @@ def plot_spectrogram(
     ax.set_title(f"{record.name or 'Signal'} - spectrogram")
     ax.set_xlabel("Time [s]")
     ax.set_ylabel("Frequency [Hz]")
+    ax.set_yscale(frequency_scale)
     colorbar = fig.colorbar(mesh, ax=ax)
     colorbar.set_label("Power [dB]")
     fig.tight_layout()
@@ -411,7 +414,7 @@ def plot_spectrogram(
 
 
 @dataclass(eq=False)
-class _SpectrogramDynamicRangePlot:
+class _DynamicRangePlot:
     fig: Figure
     mesh: object
     colorbar: object
@@ -421,7 +424,7 @@ class _SpectrogramDynamicRangePlot:
     is_updating: bool = False
 
     def update_clim(self, _value: float) -> None:
-        """Apply slider values to the spectrogram color limits."""
+        """Apply slider values to the image color limits."""
         if self.is_updating:
             return
 
@@ -452,6 +455,7 @@ def plot_spectrogram_dynamic_range(
     vmin_db: float | None = None,
     vmax_db: float | None = None,
     dynamic_range_db: float = 80.0,
+    frequency_scale: str = "linear",
     ax: Axes | None = None,
     show: bool = False,
 ) -> tuple[Figure, Axes]:
@@ -472,6 +476,7 @@ def plot_spectrogram_dynamic_range(
         mask = frequencies <= max_frequency_hz
         frequencies = frequencies[mask]
         power = power[mask, :]
+    frequencies, power = _apply_frequency_scale(frequencies, power, frequency_scale)
 
     power_db = 10.0 * np.log10(np.maximum(power, 1e-24))
     initial_vmin, initial_vmax = _spectrogram_color_limits(
@@ -498,6 +503,7 @@ def plot_spectrogram_dynamic_range(
     ax.set_title(f"{record.name or 'Signal'} - spectrogram")
     ax.set_xlabel("Time [s]")
     ax.set_ylabel("Frequency [Hz]")
+    ax.set_yscale(frequency_scale)
     colorbar = fig.colorbar(mesh, ax=ax)
     colorbar.set_label("Power [dB]")
 
@@ -519,7 +525,7 @@ def plot_spectrogram_dynamic_range(
         valmax=slider_max,
         valinit=initial_vmax,
     )
-    controller = _SpectrogramDynamicRangePlot(
+    controller = _DynamicRangePlot(
         fig=fig,
         mesh=mesh,
         colorbar=colorbar,
@@ -530,6 +536,100 @@ def plot_spectrogram_dynamic_range(
     min_slider.on_changed(controller.update_clim)
     max_slider.on_changed(controller.update_clim)
     setattr(ax, "_signal_processing_prep_spectrogram_dynamic_range", controller)
+
+    if show:
+        plt.show()
+    return fig, ax
+
+
+def plot_wavelet_scalogram(
+    record: SignalRecord,
+    *,
+    min_frequency_hz: float = 20.0,
+    max_frequency_hz: float | None = None,
+    n_frequencies: int = 64,
+    wavelet: str = "cmor1.5-1.0",
+    frequency_scale: str = "log",
+    vmin_db: float | None = None,
+    vmax_db: float | None = None,
+    dynamic_range_db: float = 80.0,
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot a Morlet continuous-wavelet scalogram for one signal record."""
+    if dynamic_range_db <= 0:
+        raise ValueError("dynamic_range_db must be positive.")
+
+    result = morlet_wavelet_scalogram(
+        record,
+        min_frequency_hz=min_frequency_hz,
+        max_frequency_hz=max_frequency_hz,
+        n_frequencies=n_frequencies,
+        wavelet=wavelet,
+    )
+    frequencies, power = _apply_frequency_scale(
+        result.frequencies_hz,
+        result.power,
+        frequency_scale,
+    )
+    power_db = 10.0 * np.log10(np.maximum(power, 1e-24))
+    initial_vmin, initial_vmax = _spectrogram_color_limits(
+        power_db,
+        vmin_db=vmin_db,
+        vmax_db=vmax_db,
+        dynamic_range_db=dynamic_range_db,
+    )
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 5))
+        plt.subplots_adjust(bottom=0.25)
+    else:
+        fig = ax.figure
+
+    mesh = ax.pcolormesh(
+        result.times_seconds,
+        frequencies,
+        power_db,
+        shading="auto",
+        vmin=initial_vmin,
+        vmax=initial_vmax,
+    )
+    ax.set_title(f"{record.name or 'Signal'} - Morlet wavelet scalogram")
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Frequency [Hz]")
+    ax.set_yscale(frequency_scale)
+    colorbar = fig.colorbar(mesh, ax=ax)
+    colorbar.set_label("Wavelet power [dB]")
+
+    slider_min, slider_max = _spectrogram_slider_bounds(power_db, initial_vmin, initial_vmax)
+    separation = max((slider_max - slider_min) * 1e-6, 1e-6)
+    min_slider_ax = fig.add_axes([0.18, 0.09, 0.64, 0.03])
+    max_slider_ax = fig.add_axes([0.18, 0.04, 0.64, 0.03])
+    min_slider = Slider(
+        ax=min_slider_ax,
+        label="Min dB",
+        valmin=slider_min,
+        valmax=slider_max,
+        valinit=initial_vmin,
+    )
+    max_slider = Slider(
+        ax=max_slider_ax,
+        label="Max dB",
+        valmin=slider_min,
+        valmax=slider_max,
+        valinit=initial_vmax,
+    )
+    controller = _DynamicRangePlot(
+        fig=fig,
+        mesh=mesh,
+        colorbar=colorbar,
+        min_slider=min_slider,
+        max_slider=max_slider,
+        minimum_separation_db=separation,
+    )
+    min_slider.on_changed(controller.update_clim)
+    max_slider.on_changed(controller.update_clim)
+    setattr(ax, "_signal_processing_prep_wavelet_dynamic_range", controller)
 
     if show:
         plt.show()
@@ -840,6 +940,22 @@ def _set_padded_ylim(ax: Axes, values: np.ndarray) -> None:
     y_max = float(np.max(finite_values))
     padding = max((y_max - y_min) * 0.05, 1e-9)
     ax.set_ylim(y_min - padding, y_max + padding)
+
+
+def _apply_frequency_scale(
+    frequencies: np.ndarray,
+    values_by_frequency: np.ndarray,
+    frequency_scale: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    if frequency_scale not in {"linear", "log"}:
+        raise ValueError("frequency_scale must be 'linear' or 'log'.")
+    if frequency_scale == "linear":
+        return frequencies, values_by_frequency
+
+    positive_frequency_mask = frequencies > 0.0
+    if not np.any(positive_frequency_mask):
+        raise ValueError("frequency_scale='log' requires at least one positive frequency bin.")
+    return frequencies[positive_frequency_mask], values_by_frequency[positive_frequency_mask, :]
 
 
 def _spectrogram_color_limits(

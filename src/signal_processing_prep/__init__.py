@@ -33,6 +33,7 @@ from signal_processing_prep.plotting import (
     plot_time_signal_adaptive,
     plot_time_signal,
     plot_time_signal_navigator,
+    plot_wavelet_scalogram,
     save_figure,
 )
 from signal_processing_prep.pipeline import (
@@ -108,6 +109,7 @@ __all__ = [
     "plot_time_signal_adaptive",
     "plot_time_signal",
     "plot_time_signal_navigator",
+    "plot_wavelet_scalogram",
     "run_isolation_forest",
     "run_supervised_baselines",
     "run_synthetic_analysis",

@@ -20,6 +20,7 @@ from signal_processing_prep.plotting import (
     plot_time_signal,
     plot_time_signal_adaptive,
     plot_time_signal_navigator,
+    plot_wavelet_scalogram,
     save_figure,
 )
 from signal_processing_prep.synthetic import sine_wave
@@ -263,8 +264,26 @@ def test_plot_spectrogram_returns_labeled_figure() -> None:
     assert fig is ax.figure
     assert ax.get_xlabel() == "Time [s]"
     assert ax.get_ylabel() == "Frequency [Hz]"
+    assert ax.get_yscale() == "linear"
     assert "spectrogram" in ax.get_title()
     assert len(fig.axes) == 2
+    plt.close(fig)
+
+
+def test_plot_spectrogram_supports_log_frequency_scale() -> None:
+    """Log-frequency spectrograms drop the zero-Hz bin and use a log y-axis."""
+    record = sine_wave(frequency_hz=20.0, duration_seconds=1.0, sampling_rate_hz=200.0)
+
+    fig, ax = plot_spectrogram(
+        record,
+        window_seconds=0.2,
+        step_seconds=0.1,
+        frequency_scale="log",
+    )
+    y_coordinates = ax.collections[0].get_coordinates()[:, :, 1]
+
+    assert ax.get_yscale() == "log"
+    assert np.nanmin(y_coordinates) > 0.0
     plt.close(fig)
 
 
@@ -279,6 +298,23 @@ def test_plot_spectrogram_dynamic_range_adds_sliders() -> None:
     assert ax.get_ylabel() == "Frequency [Hz]"
     assert len(fig.axes) == 4
     assert hasattr(ax, "_signal_processing_prep_spectrogram_dynamic_range")
+    plt.close(fig)
+
+
+def test_plot_spectrogram_dynamic_range_supports_log_frequency_scale() -> None:
+    """Dynamic spectrograms support the same log-frequency view."""
+    record = sine_wave(frequency_hz=20.0, duration_seconds=1.0, sampling_rate_hz=200.0)
+
+    fig, ax = plot_spectrogram_dynamic_range(
+        record,
+        window_seconds=0.2,
+        step_seconds=0.1,
+        frequency_scale="log",
+    )
+    y_coordinates = ax.collections[0].get_coordinates()[:, :, 1]
+
+    assert ax.get_yscale() == "log"
+    assert np.nanmin(y_coordinates) > 0.0
     plt.close(fig)
 
 
@@ -315,6 +351,75 @@ def test_plot_spectrogram_dynamic_range_rejects_invalid_arguments() -> None:
 
     with pytest.raises(ValueError, match="vmin_db"):
         plot_spectrogram_dynamic_range(record, vmin_db=-20.0, vmax_db=-20.0)
+
+    with pytest.raises(ValueError, match="frequency_scale"):
+        plot_spectrogram(record, frequency_scale="symlog")
+
+    with pytest.raises(ValueError, match="frequency_scale"):
+        plot_spectrogram_dynamic_range(record, frequency_scale="symlog")
+
+
+def test_plot_wavelet_scalogram_returns_labeled_log_figure() -> None:
+    """Wavelet scalograms return labeled axes, a colorbar, and dB range sliders."""
+    record = sine_wave(frequency_hz=20.0, duration_seconds=1.0, sampling_rate_hz=200.0)
+
+    fig, ax = plot_wavelet_scalogram(
+        record,
+        min_frequency_hz=5.0,
+        max_frequency_hz=80.0,
+        n_frequencies=16,
+    )
+
+    assert fig is ax.figure
+    assert ax.get_xlabel() == "Time [s]"
+    assert ax.get_ylabel() == "Frequency [Hz]"
+    assert ax.get_yscale() == "log"
+    assert "wavelet scalogram" in ax.get_title()
+    assert len(fig.axes) == 4
+    assert hasattr(ax, "_signal_processing_prep_wavelet_dynamic_range")
+    plt.close(fig)
+
+
+def test_plot_wavelet_scalogram_sliders_update_color_limits() -> None:
+    """Changing the wavelet dB sliders updates the scalogram mesh color limits."""
+    record = sine_wave(frequency_hz=20.0, duration_seconds=1.0, sampling_rate_hz=200.0)
+
+    fig, ax = plot_wavelet_scalogram(
+        record,
+        min_frequency_hz=5.0,
+        max_frequency_hz=80.0,
+        n_frequencies=16,
+        dynamic_range_db=40.0,
+    )
+    controller = ax._signal_processing_prep_wavelet_dynamic_range
+    mesh = ax.collections[0]
+    original_vmin, original_vmax = mesh.get_clim()
+
+    controller.min_slider.set_val(original_vmin + 5.0)
+    controller.max_slider.set_val(original_vmax - 5.0)
+
+    assert mesh.get_clim() == pytest.approx((original_vmin + 5.0, original_vmax - 5.0))
+    plt.close(fig)
+
+
+def test_plot_wavelet_scalogram_rejects_invalid_arguments() -> None:
+    """Invalid wavelet plotting arguments fail clearly."""
+    record = sine_wave(frequency_hz=20.0, duration_seconds=1.0, sampling_rate_hz=200.0)
+
+    with pytest.raises(ValueError, match="max_frequency_hz"):
+        plot_wavelet_scalogram(record, min_frequency_hz=80.0, max_frequency_hz=20.0)
+
+    with pytest.raises(ValueError, match="n_frequencies"):
+        plot_wavelet_scalogram(record, n_frequencies=0)
+
+    with pytest.raises(ValueError, match="frequency_scale"):
+        plot_wavelet_scalogram(record, frequency_scale="symlog")
+
+    with pytest.raises(ValueError, match="dynamic_range_db"):
+        plot_wavelet_scalogram(record, dynamic_range_db=0.0)
+
+    with pytest.raises(ValueError, match="vmin_db"):
+        plot_wavelet_scalogram(record, vmin_db=-20.0, vmax_db=-20.0)
 
 
 def test_plot_feature_distribution_groups_by_label() -> None:
