@@ -16,7 +16,9 @@ from signal_processing_prep.plotting import (
     plot_frequency_spectra,
     plot_frequency_spectrum,
     plot_spectrogram,
+    plot_spectrogram_dynamic_range,
     plot_time_signal,
+    plot_time_signal_adaptive,
     plot_time_signal_navigator,
     save_figure,
 )
@@ -115,6 +117,40 @@ def test_plot_time_signal_rejects_invalid_window_arguments() -> None:
 
     with pytest.raises(ValueError, match="downsample_method"):
         plot_time_signal(record, max_points=1, downsample_method="unknown")
+
+
+def test_plot_time_signal_adaptive_updates_data_when_zooming() -> None:
+    """Adaptive time plots recompute displayed samples from the visible x-range."""
+    record = sine_wave(duration_seconds=10.0, sampling_rate_hz=1000.0)
+
+    fig, ax = plot_time_signal_adaptive(record, max_points=100)
+    initial_x_data = ax.lines[0].get_xdata()
+
+    ax.set_xlim(2.0, 2.05)
+    zoom_x_data = ax.lines[0].get_xdata()
+
+    assert len(initial_x_data) <= 100
+    assert len(zoom_x_data) == 50
+    assert zoom_x_data[0] >= 2.0
+    assert zoom_x_data[-1] < 2.05
+    plt.close(fig)
+
+
+def test_plot_time_signal_adaptive_rejects_invalid_arguments() -> None:
+    """Adaptive time plots validate their display and window arguments."""
+    record = sine_wave()
+
+    with pytest.raises(ValueError, match="max_points must be positive"):
+        plot_time_signal_adaptive(record, max_points=0)
+
+    with pytest.raises(ValueError, match="start_seconds must be non-negative"):
+        plot_time_signal_adaptive(record, start_seconds=-1.0)
+
+    with pytest.raises(ValueError, match="duration_seconds must be positive"):
+        plot_time_signal_adaptive(record, duration_seconds=0.0)
+
+    with pytest.raises(ValueError, match="downsample_method"):
+        plot_time_signal_adaptive(record, max_points=1, downsample_method="unknown")
 
 
 def test_plot_time_signal_navigator_updates_visible_window() -> None:
@@ -230,6 +266,55 @@ def test_plot_spectrogram_returns_labeled_figure() -> None:
     assert "spectrogram" in ax.get_title()
     assert len(fig.axes) == 2
     plt.close(fig)
+
+
+def test_plot_spectrogram_dynamic_range_adds_sliders() -> None:
+    """Dynamic spectrogram plots expose colorbar and dB range sliders."""
+    record = sine_wave(frequency_hz=20.0, duration_seconds=1.0, sampling_rate_hz=200.0)
+
+    fig, ax = plot_spectrogram_dynamic_range(record, window_seconds=0.2, step_seconds=0.1)
+
+    assert fig is ax.figure
+    assert ax.get_xlabel() == "Time [s]"
+    assert ax.get_ylabel() == "Frequency [Hz]"
+    assert len(fig.axes) == 4
+    assert hasattr(ax, "_signal_processing_prep_spectrogram_dynamic_range")
+    plt.close(fig)
+
+
+def test_plot_spectrogram_dynamic_range_sliders_update_color_limits() -> None:
+    """Changing the dB sliders updates the spectrogram mesh color limits."""
+    record = sine_wave(frequency_hz=20.0, duration_seconds=1.0, sampling_rate_hz=200.0)
+
+    fig, ax = plot_spectrogram_dynamic_range(
+        record,
+        window_seconds=0.2,
+        step_seconds=0.1,
+        dynamic_range_db=40.0,
+    )
+    controller = ax._signal_processing_prep_spectrogram_dynamic_range
+    mesh = ax.collections[0]
+    original_vmin, original_vmax = mesh.get_clim()
+
+    controller.min_slider.set_val(original_vmin + 5.0)
+    controller.max_slider.set_val(original_vmax - 5.0)
+
+    assert mesh.get_clim() == pytest.approx((original_vmin + 5.0, original_vmax - 5.0))
+    plt.close(fig)
+
+
+def test_plot_spectrogram_dynamic_range_rejects_invalid_arguments() -> None:
+    """Invalid dynamic spectrogram arguments fail clearly."""
+    record = sine_wave()
+
+    with pytest.raises(ValueError, match="max_frequency_hz"):
+        plot_spectrogram_dynamic_range(record, max_frequency_hz=0.0)
+
+    with pytest.raises(ValueError, match="dynamic_range_db"):
+        plot_spectrogram_dynamic_range(record, dynamic_range_db=0.0)
+
+    with pytest.raises(ValueError, match="vmin_db"):
+        plot_spectrogram_dynamic_range(record, vmin_db=-20.0, vmax_db=-20.0)
 
 
 def test_plot_feature_distribution_groups_by_label() -> None:

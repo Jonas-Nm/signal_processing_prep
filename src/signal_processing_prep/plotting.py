@@ -56,6 +56,102 @@ def plot_time_signal(
     return fig, ax
 
 
+@dataclass(eq=False)
+class _AdaptiveTimeSignalPlot:
+    record: SignalRecord
+    fig: Figure
+    ax: Axes
+    line: object
+    max_points: int
+    downsample_method: str
+    callback_id: int | None = None
+    is_updating: bool = False
+
+    def update_to_xlim(self, _axes: Axes | None = None) -> None:
+        if self.is_updating:
+            return
+
+        start_seconds, duration_seconds = _visible_window_from_xlim(self.record, self.ax.get_xlim())
+        time, values = _windowed_data(
+            self.record,
+            start_seconds=start_seconds,
+            duration_seconds=duration_seconds,
+            max_points=self.max_points,
+            downsample_method=self.downsample_method,
+        )
+
+        self.is_updating = True
+        try:
+            self.line.set_data(time, values)
+            _set_padded_ylim(self.ax, values)
+            self.fig.canvas.draw_idle()
+        finally:
+            self.is_updating = False
+
+
+def plot_time_signal_adaptive(
+    record: SignalRecord,
+    *,
+    start_seconds: float | None = None,
+    duration_seconds: float | None = None,
+    max_points: int = 2000,
+    downsample_method: str = "envelope",
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot a signal with zoom-aware display downsampling.
+
+    The plotted line is recomputed from the original signal whenever the x-axis
+    limits change. This keeps overview plots bounded while showing all raw
+    samples once the visible range contains no more than ``max_points`` samples.
+    """
+    if max_points <= 0:
+        raise ValueError("max_points must be positive.")
+
+    time, values = _windowed_data(
+        record,
+        start_seconds=start_seconds,
+        duration_seconds=duration_seconds,
+        max_points=max_points,
+        downsample_method=downsample_method,
+    )
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 4))
+    else:
+        fig = ax.figure
+
+    (line,) = ax.plot(time, values, linewidth=1.0, label=record.label or record.name or "signal")
+    ax.set_title(_time_plot_title(record, start_seconds, duration_seconds))
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Amplitude")
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(time[0], time[-1])
+    _set_padded_ylim(ax, values)
+    if record.label is not None:
+        ax.legend(loc="best")
+
+    existing = getattr(ax, "_signal_processing_prep_adaptive_time_plot", None)
+    if existing is not None and existing.callback_id is not None:
+        ax.callbacks.disconnect(existing.callback_id)
+
+    controller = _AdaptiveTimeSignalPlot(
+        record=record,
+        fig=fig,
+        ax=ax,
+        line=line,
+        max_points=max_points,
+        downsample_method=downsample_method,
+    )
+    controller.callback_id = ax.callbacks.connect("xlim_changed", controller.update_to_xlim)
+    setattr(ax, "_signal_processing_prep_adaptive_time_plot", controller)
+
+    fig.tight_layout()
+
+    if show:
+        plt.show()
+    return fig, ax
+
+
 @dataclass
 class TimeSignalNavigator:
     """Interactive matplotlib controls for exploring one time-domain signal."""
@@ -178,6 +274,7 @@ def plot_frequency_spectrum(
     start_seconds: float | None = None,
     duration_seconds: float | None = None,
     spectrum_type: str = "fft",
+    nperseg: int | None = None,
     max_frequency_hz: float | None = None,
     ax: Axes | None = None,
     show: bool = False,
@@ -188,6 +285,7 @@ def plot_frequency_spectrum(
         start_seconds=start_seconds,
         duration_seconds=duration_seconds,
         spectrum_type=spectrum_type,
+        nperseg=nperseg,
     )
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 4))
@@ -218,6 +316,7 @@ def plot_frequency_spectra(
     start_seconds: float | None = None,
     duration_seconds: float | None = None,
     spectrum_type: str = "fft",
+    nperseg: int | None = None,
     max_frequency_hz: float | None = None,
     ax: Axes | None = None,
     show: bool = False,
@@ -241,6 +340,7 @@ def plot_frequency_spectra(
             start_seconds=start_seconds,
             duration_seconds=duration_seconds,
             spectrum_type=spectrum_type,
+            nperseg=nperseg,
         )
         ax.plot(frequencies, values, linewidth=1.0, label=record.name or record.label or "signal")
 
@@ -304,6 +404,132 @@ def plot_spectrogram(
     colorbar = fig.colorbar(mesh, ax=ax)
     colorbar.set_label("Power [dB]")
     fig.tight_layout()
+
+    if show:
+        plt.show()
+    return fig, ax
+
+
+@dataclass(eq=False)
+class _SpectrogramDynamicRangePlot:
+    fig: Figure
+    mesh: object
+    colorbar: object
+    min_slider: Slider
+    max_slider: Slider
+    minimum_separation_db: float
+    is_updating: bool = False
+
+    def update_clim(self, _value: float) -> None:
+        """Apply slider values to the spectrogram color limits."""
+        if self.is_updating:
+            return
+
+        vmin = float(self.min_slider.val)
+        vmax = float(self.max_slider.val)
+        self.is_updating = True
+        try:
+            if vmin >= vmax:
+                if vmin + self.minimum_separation_db <= self.max_slider.valmax:
+                    vmax = vmin + self.minimum_separation_db
+                    self.max_slider.set_val(vmax)
+                else:
+                    vmin = vmax - self.minimum_separation_db
+                    self.min_slider.set_val(vmin)
+            self.mesh.set_clim(vmin, vmax)
+            self.colorbar.update_normal(self.mesh)
+            self.fig.canvas.draw_idle()
+        finally:
+            self.is_updating = False
+
+
+def plot_spectrogram_dynamic_range(
+    record: SignalRecord,
+    *,
+    window_seconds: float = 0.1,
+    step_seconds: float | None = None,
+    max_frequency_hz: float | None = None,
+    vmin_db: float | None = None,
+    vmax_db: float | None = None,
+    dynamic_range_db: float = 80.0,
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot a spectrogram with interactive dB color-range controls."""
+    if dynamic_range_db <= 0:
+        raise ValueError("dynamic_range_db must be positive.")
+    if max_frequency_hz is not None and max_frequency_hz <= 0:
+        raise ValueError("max_frequency_hz must be positive.")
+
+    result = spectrogram_analysis(
+        record,
+        window_seconds=window_seconds,
+        step_seconds=step_seconds,
+    )
+    frequencies = result.frequencies_hz
+    power = result.power
+    if max_frequency_hz is not None:
+        mask = frequencies <= max_frequency_hz
+        frequencies = frequencies[mask]
+        power = power[mask, :]
+
+    power_db = 10.0 * np.log10(np.maximum(power, 1e-24))
+    initial_vmin, initial_vmax = _spectrogram_color_limits(
+        power_db,
+        vmin_db=vmin_db,
+        vmax_db=vmax_db,
+        dynamic_range_db=dynamic_range_db,
+    )
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 5))
+        plt.subplots_adjust(bottom=0.25)
+    else:
+        fig = ax.figure
+
+    mesh = ax.pcolormesh(
+        result.times_seconds,
+        frequencies,
+        power_db,
+        shading="auto",
+        vmin=initial_vmin,
+        vmax=initial_vmax,
+    )
+    ax.set_title(f"{record.name or 'Signal'} - spectrogram")
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Frequency [Hz]")
+    colorbar = fig.colorbar(mesh, ax=ax)
+    colorbar.set_label("Power [dB]")
+
+    slider_min, slider_max = _spectrogram_slider_bounds(power_db, initial_vmin, initial_vmax)
+    separation = max((slider_max - slider_min) * 1e-6, 1e-6)
+    min_slider_ax = fig.add_axes([0.18, 0.09, 0.64, 0.03])
+    max_slider_ax = fig.add_axes([0.18, 0.04, 0.64, 0.03])
+    min_slider = Slider(
+        ax=min_slider_ax,
+        label="Min dB",
+        valmin=slider_min,
+        valmax=slider_max,
+        valinit=initial_vmin,
+    )
+    max_slider = Slider(
+        ax=max_slider_ax,
+        label="Max dB",
+        valmin=slider_min,
+        valmax=slider_max,
+        valinit=initial_vmax,
+    )
+    controller = _SpectrogramDynamicRangePlot(
+        fig=fig,
+        mesh=mesh,
+        colorbar=colorbar,
+        min_slider=min_slider,
+        max_slider=max_slider,
+        minimum_separation_db=separation,
+    )
+    min_slider.on_changed(controller.update_clim)
+    max_slider.on_changed(controller.update_clim)
+    setattr(ax, "_signal_processing_prep_spectrogram_dynamic_range", controller)
 
     if show:
         plt.show()
@@ -539,6 +765,7 @@ def _windowed_spectrum(
     start_seconds: float | None,
     duration_seconds: float | None,
     spectrum_type: str,
+    nperseg: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, str]:
     _, values = _windowed_data(
         record,
@@ -551,7 +778,7 @@ def _windowed_spectrum(
         spectrum = fft_magnitude(values, sampling_rate_hz=record.sampling_rate_hz)
         return spectrum.frequencies_hz, spectrum.magnitudes, "Magnitude"
 
-    power_spectrum = psd(values, sampling_rate_hz=record.sampling_rate_hz)
+    power_spectrum = psd(values, sampling_rate_hz=record.sampling_rate_hz, nperseg=nperseg)
     return power_spectrum.frequencies_hz, power_spectrum.power, "PSD [amplitude^2 / Hz]"
 
 
@@ -586,6 +813,73 @@ def _windowed_data(
     if max_points is None:
         return time, values
     return _downsample_for_plot(time, values, max_points, method=downsample_method)
+
+
+def _visible_window_from_xlim(record: SignalRecord, xlim: tuple[float, float]) -> tuple[float, float]:
+    x_min, x_max = sorted(float(limit) for limit in xlim)
+    if not np.isfinite(x_min) or not np.isfinite(x_max):
+        return 0.0, record.duration_seconds
+
+    start_seconds = min(max(x_min, 0.0), record.duration_seconds)
+    end_seconds = min(max(x_max, 0.0), record.duration_seconds)
+    sample_period_seconds = 1.0 / record.sampling_rate_hz
+    if end_seconds <= start_seconds:
+        end_seconds = min(start_seconds + sample_period_seconds, record.duration_seconds)
+        start_seconds = min(start_seconds, max(record.duration_seconds - sample_period_seconds, 0.0))
+
+    duration_seconds = max(end_seconds - start_seconds, sample_period_seconds)
+    return start_seconds, duration_seconds
+
+
+def _set_padded_ylim(ax: Axes, values: np.ndarray) -> None:
+    finite_values = values[np.isfinite(values)]
+    if finite_values.size == 0:
+        return
+
+    y_min = float(np.min(finite_values))
+    y_max = float(np.max(finite_values))
+    padding = max((y_max - y_min) * 0.05, 1e-9)
+    ax.set_ylim(y_min - padding, y_max + padding)
+
+
+def _spectrogram_color_limits(
+    power_db: np.ndarray,
+    *,
+    vmin_db: float | None,
+    vmax_db: float | None,
+    dynamic_range_db: float,
+) -> tuple[float, float]:
+    finite_power = power_db[np.isfinite(power_db)]
+    if finite_power.size == 0:
+        data_max = 0.0
+    else:
+        data_max = float(np.max(finite_power))
+
+    vmax = data_max if vmax_db is None else float(vmax_db)
+    vmin = vmax - dynamic_range_db if vmin_db is None else float(vmin_db)
+    if vmin >= vmax:
+        raise ValueError("vmin_db must be less than vmax_db.")
+    return vmin, vmax
+
+
+def _spectrogram_slider_bounds(
+    power_db: np.ndarray,
+    initial_vmin: float,
+    initial_vmax: float,
+) -> tuple[float, float]:
+    finite_power = power_db[np.isfinite(power_db)]
+    if finite_power.size == 0:
+        data_min = initial_vmin
+        data_max = initial_vmax
+    else:
+        data_min = float(np.min(finite_power))
+        data_max = float(np.max(finite_power))
+
+    slider_min = min(data_min, initial_vmin)
+    slider_max = max(data_max, initial_vmax)
+    if slider_min >= slider_max:
+        slider_max = slider_min + 1.0
+    return slider_min, slider_max
 
 
 def _downsample_for_plot(
