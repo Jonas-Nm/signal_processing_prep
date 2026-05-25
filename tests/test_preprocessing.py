@@ -29,7 +29,8 @@ def test_lowpass_filter_reduces_high_frequency_energy() -> None:
     assert filtered.name == "mixed"
     assert filtered.sampling_rate_hz == mixed.sampling_rate_hz
     assert band_energy(filtered, low_hz=190.0, high_hz=210.0) < 0.05
-    assert filtered.metadata["preprocessing"]["filter_kind"] == "lowpass"
+    assert filtered.processing_history[-1].parameters["filter_kind"] == "lowpass"
+    assert filtered.processing_history[-1].operation == "filter"
 
 
 def test_filter_preserves_existing_preprocessing_metadata() -> None:
@@ -51,9 +52,11 @@ def test_filter_preserves_existing_preprocessing_metadata() -> None:
         ),
     )
 
-    preprocessing = filtered.metadata["preprocessing"]
-    assert preprocessing["missing_value_interpolation"]["missing_count"] == 1
-    assert preprocessing["filter_kind"] == "lowpass"
+    assert [step.operation for step in filtered.processing_history] == [
+        "missing_value_interpolation",
+        "filter",
+    ]
+    assert filtered.processing_history[0].parameters["missing_count"] == 1
 
 
 def test_bandpass_filter_keeps_target_band() -> None:
@@ -102,7 +105,7 @@ def test_zero_phase_filter_can_use_explicit_causal_fallback() -> None:
     )
 
     assert filtered.n_samples == record.n_samples
-    assert filtered.metadata["preprocessing"]["phase_mode"] == "causal_fallback"
+    assert filtered.processing_history[-1].parameters["phase_mode"] == "causal_fallback"
 
 
 def test_apply_window_multiplies_values_and_records_metadata() -> None:
@@ -113,8 +116,8 @@ def test_apply_window_multiplies_values_and_records_metadata() -> None:
 
     assert windowed.values[0] == pytest.approx(0.0)
     assert windowed.values[4] == pytest.approx(1.0)
-    assert windowed.metadata["window"]["name"] == "hann"
-    assert windowed.metadata["preprocessing"]["window"]["name"] == "hann"
+    assert windowed.processing_history[-1].parameters["name"] == "hann"
+    assert windowed.processing_history[-1].operation == "window"
 
 
 def test_apply_window_preserves_existing_preprocessing_metadata() -> None:
@@ -122,16 +125,17 @@ def test_apply_window_preserves_existing_preprocessing_metadata() -> None:
     record = SignalRecord(
         values=np.array([1.0, np.nan, 3.0, 4.0]),
         sampling_rate_hz=4.0,
-        metadata={"preprocessing": {"source_step": "manual"}},
+        attributes={"source_step": "manual"},
     )
     cleaned = interpolate_missing_values(record, max_missing_fraction=0.25)
 
     windowed = apply_window(cleaned, window="hann")
 
-    preprocessing = windowed.metadata["preprocessing"]
-    assert preprocessing["source_step"] == "manual"
-    assert preprocessing["missing_value_interpolation"]["missing_count"] == 1
-    assert preprocessing["window"]["name"] == "hann"
+    assert windowed.attributes["source_step"] == "manual"
+    assert [step.operation for step in windowed.processing_history] == [
+        "missing_value_interpolation",
+        "window",
+    ]
 
 
 def test_interpolate_missing_values_fills_small_gaps_and_records_metadata() -> None:
@@ -141,7 +145,7 @@ def test_interpolate_missing_values_fills_small_gaps_and_records_metadata() -> N
         sampling_rate_hz=10.0,
         label="normal",
         name="dirty",
-        metadata={"sensor": "accel"},
+        attributes={"sensor": "accel"},
     )
 
     cleaned = interpolate_missing_values(record, max_missing_fraction=0.5)
@@ -150,8 +154,8 @@ def test_interpolate_missing_values_fills_small_gaps_and_records_metadata() -> N
     assert cleaned.sampling_rate_hz == record.sampling_rate_hz
     assert cleaned.label == record.label
     assert cleaned.name == record.name
-    assert cleaned.metadata["sensor"] == "accel"
-    interpolation = cleaned.metadata["preprocessing"]["missing_value_interpolation"]
+    assert cleaned.attributes["sensor"] == "accel"
+    interpolation = cleaned.processing_history[-1].parameters
     assert interpolation["method"] == "linear"
     assert interpolation["missing_count"] == 2
     assert interpolation["missing_fraction"] == pytest.approx(0.4)
@@ -179,11 +183,13 @@ def test_segment_signal_returns_explicit_windows() -> None:
 
     assert len(windows) == 4
     assert windows[0].values.tolist() == [0.0, 1.0, 2.0, 3.0]
-    assert windows[1].metadata["window_start_seconds"] == 0.2
-    assert windows[-1].metadata["window_end_seconds"] == 1.0
+    assert windows[1].segment_span.start_seconds == 0.2
+    assert windows[-1].segment_span.end_seconds == 1.0
     assert {window.provenance.source_name for window in windows} == {"ramp"}
     assert windows[0].provenance.source_path == "capture.csv"
     assert windows[0].acquisition == record.acquisition
+    assert windows[1].segment_span is not None
+    assert windows[1].segment_span.start_seconds == 0.2
 
 
 def test_segment_signal_can_include_partial_window() -> None:
@@ -218,7 +224,7 @@ def test_preprocessing_rejects_invalid_filter_and_window_settings() -> None:
     """Invalid preprocessing settings fail clearly."""
     record = sine_wave(sampling_rate_hz=100.0)
 
-    with pytest.raises(ValueError, match="Filter kind"):
+    with pytest.raises(ValueError, match="analysis.filtering.kind"):
         apply_filter(record, FilterSpec(kind="not-a-filter"))
 
     with pytest.raises(ValueError, match="high_cut_hz"):
@@ -227,7 +233,7 @@ def test_preprocessing_rejects_invalid_filter_and_window_settings() -> None:
     with pytest.raises(ValueError, match="Nyquist"):
         apply_filter(record, FilterSpec(kind="highpass", low_cut_hz=60.0))
 
-    with pytest.raises(ValueError, match="low_cut_hz must be less"):
+    with pytest.raises(ValueError, match="analysis.filtering.low_cut_hz must be below"):
         apply_filter(
             record,
             FilterSpec(kind="bandpass", low_cut_hz=20.0, high_cut_hz=10.0),

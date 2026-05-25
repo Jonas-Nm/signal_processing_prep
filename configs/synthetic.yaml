@@ -30,10 +30,9 @@ analysis:
   window:
     size_seconds: 0.25
     overlap_fraction: 0.5
-
-filtering:
-  enabled: false
-  kind: null
-  low_cut_hz: null
-  high_cut_hz: null
-  order: 4
+  filtering:
+    enabled: false
+    kind: null
+    low_cut_hz: null
+    high_cut_hz: null
+    order: 4

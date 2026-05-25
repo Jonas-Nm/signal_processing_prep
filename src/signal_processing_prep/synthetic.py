@@ -43,7 +43,7 @@ def sine_wave(
         sampling_rate_hz=sampling_rate_hz,
         label=label,
         name=name,
-        metadata={"frequency_hz": frequency_hz, "amplitude": amplitude},
+        attributes={"frequency_hz": frequency_hz, "amplitude": amplitude},
     )
 
 
@@ -72,8 +72,8 @@ def noisy_sine_wave(
     )
     rng = np.random.default_rng(seed)
     values = clean.values + rng.normal(0.0, noise_std, size=clean.n_samples)
-    metadata = {**clean.metadata, "noise_std": noise_std, "seed": seed}
-    return SignalRecord(values, sampling_rate_hz, label=label, name=name, metadata=metadata)
+    attributes = {**clean.attributes, "noise_std": noise_std, "seed": seed}
+    return SignalRecord(values, sampling_rate_hz, label=label, name=name, attributes=attributes)
 
 
 def impulse_train(
@@ -98,7 +98,7 @@ def impulse_train(
         sampling_rate_hz,
         label=label,
         name=name,
-        metadata={"impulse_rate_hz": impulse_rate_hz, "amplitude": amplitude},
+        attributes={"impulse_rate_hz": impulse_rate_hz, "amplitude": amplitude},
     )
 
 
@@ -127,7 +127,7 @@ def chirp_signal(
         sampling_rate_hz,
         label=label,
         name=name,
-        metadata={
+        attributes={
             "start_frequency_hz": start_frequency_hz,
             "end_frequency_hz": end_frequency_hz,
             "amplitude": amplitude,
@@ -158,8 +158,8 @@ def clipped_signal(
         name=name,
     )
     values = np.clip(base.values, -clip_limit, clip_limit)
-    metadata = {**base.metadata, "clip_limit": clip_limit}
-    return SignalRecord(values, sampling_rate_hz, label=label, name=name, metadata=metadata)
+    attributes = {**base.attributes, "clip_limit": clip_limit}
+    return SignalRecord(values, sampling_rate_hz, label=label, name=name, attributes=attributes)
 
 
 def transient_burst(
@@ -194,7 +194,7 @@ def transient_burst(
         sampling_rate_hz,
         label=label,
         name=name,
-        metadata={
+        attributes={
             "burst_frequency_hz": burst_frequency_hz,
             "burst_start_seconds": burst_start_seconds,
             "burst_duration_seconds": burst_duration_seconds,
@@ -271,10 +271,10 @@ def window_signal(
         sampling_rate_hz,
         label=label,
         name=name or f"{canonical_type}_window",
-        metadata={
+        attributes={
             "window_type": canonical_type,
-            "window_start_seconds": window_start_seconds,
-            "window_duration_seconds": window_duration_seconds,
+            "active_window_start_seconds": window_start_seconds,
+            "active_window_duration_seconds": window_duration_seconds,
             "amplitude": amplitude,
         },
     )
@@ -311,7 +311,7 @@ def sinc_signal(
         sampling_rate_hz,
         label=label,
         name=name,
-        metadata={
+        attributes={
             "bandwidth_hz": bandwidth_hz,
             "center_seconds": center_seconds,
             "amplitude": amplitude,
@@ -334,7 +334,7 @@ def add_signals(
         sampling_rate_hz=first.sampling_rate_hz,
         label=label,
         name=name,
-        metadata=_composition_metadata("add", records),
+        attributes=_composition_metadata("add", records),
     )
 
 
@@ -353,7 +353,7 @@ def multiply_signals(
         sampling_rate_hz=first.sampling_rate_hz,
         label=label,
         name=name,
-        metadata=_composition_metadata("multiply", records),
+        attributes=_composition_metadata("multiply", records),
     )
 
 
@@ -376,7 +376,7 @@ def convolve_signals(
         sampling_rate_hz=first.sampling_rate_hz,
         label=label,
         name=name,
-        metadata={
+        attributes={
             **_composition_metadata("convolve", [first, second]),
             "mode": mode,
         },

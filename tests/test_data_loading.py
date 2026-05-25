@@ -1,4 +1,4 @@
-"""Tests for loading signal files into SignalRecord objects."""
+"""Tests for the canonical dataset-loading facade."""
 
 from pathlib import Path
 
@@ -7,209 +7,193 @@ import pandas as pd
 import pytest
 from scipy.io import wavfile
 
-from signal_processing_prep.data_loading import (
-    load_signal_dataset,
-    load_signal_file,
-    load_signal_file_channels,
+from signal_processing_prep._loading_formats import (
+    CsvSignalFileLoader,
+    NpySignalFileLoader,
+    TxtSignalFileLoader,
+    WavSignalFileLoader,
 )
+from signal_processing_prep.config import AnalysisConfig, LoadingConfig, ModelingConfig, PathsConfig, ProjectConfig
+from signal_processing_prep.data_loading import SignalDatasetLoader
+from signal_processing_prep.records import SignalRecord
 
 
-def test_load_csv_uses_explicit_signal_and_label_columns(tmp_path: Path) -> None:
-    """CSV loading can use explicit signal and label columns."""
+def test_csv_loader_uses_typed_provenance_and_acquisition(tmp_path: Path) -> None:
     path = tmp_path / "record.csv"
     pd.DataFrame(
-        {
-            "time": [0.0, 0.1, 0.2],
-            "vibration": [1.0, 0.0, -1.0],
-            "condition": ["normal", "normal", "normal"],
-        }
+        {"time": [0.0, 0.1, 0.2, 0.35], "vibration": [1.0, 0.0, -1.0, 0.0], "condition": ["normal"] * 4}
     ).to_csv(path, index=False)
 
-    record = load_signal_file(
-        path,
-        sampling_rate_hz=10.0,
-        signal_column="vibration",
-        label_column="condition",
-    )
+    record = SignalDatasetLoader().load_file(path, signal_column="vibration", label_column="condition")
 
-    np.testing.assert_allclose(record.values, [1.0, 0.0, -1.0])
-    assert record.sampling_rate_hz == 10.0
     assert record.label == "normal"
-    assert record.name == "record"
-    assert record.metadata["signal_column"] == "vibration"
-
-
-def test_load_csv_defaults_to_first_numeric_column(tmp_path: Path) -> None:
-    """CSV loading chooses the only non-time numeric column when unambiguous."""
-    path = tmp_path / "numeric.csv"
-    pd.DataFrame({"time": [0.0, 0.1, 0.2], "signal": [1, 2, 3]}).to_csv(
-        path, index=False
-    )
-
-    record = load_signal_file(path, sampling_rate_hz=100.0)
-
-    np.testing.assert_allclose(record.values, [1.0, 2.0, 3.0])
-    assert record.metadata["signal_column"] == "signal"
-
-
-def test_load_csv_infers_sampling_rate_and_time_axis_metadata(tmp_path: Path) -> None:
-    """CSV time columns provide acquisition metadata and a fallback sampling rate."""
-    path = tmp_path / "timed.csv"
-    pd.DataFrame(
-        {
-            "time": [0.0, 0.1, 0.2, 0.35],
-            "signal": [1.0, 2.0, 3.0, 4.0],
-        }
-    ).to_csv(path, index=False)
-
-    record = load_signal_file(path)
-
-    assert record.sampling_rate_hz == pytest.approx(10.0)
-    assert record.metadata["sampling_rate_source"] == "time_column"
-    assert record.metadata["time_column"] == "time"
-    assert record.metadata["time_gap_count"] == 0
-    assert record.metadata["time_step_jitter_fraction"] > 0.0
-    assert record.provenance.source_name == "timed"
-    assert record.provenance.source_path == str(path)
+    assert record.provenance.source_format == "csv"
+    assert record.provenance.signal_column == "vibration"
     assert record.acquisition.sampling_rate_source == "time_column"
     assert record.acquisition.time_step_jitter_fraction > 0.0
+    assert not record.attributes
 
 
-def test_load_csv_requires_signal_column_for_ambiguous_numeric_columns(
-    tmp_path: Path,
-) -> None:
-    """CSV loading refuses to guess between multiple non-time numeric columns."""
+def test_csv_loader_refuses_ambiguous_signal_columns(tmp_path: Path) -> None:
     path = tmp_path / "ambiguous.csv"
-    pd.DataFrame({"time": [0.0, 0.1], "x": [1.0, 2.0], "y": [3.0, 4.0]}).to_csv(
-        path, index=False
-    )
+    pd.DataFrame({"time": [0.0, 0.1], "x": [1.0, 2.0], "y": [3.0, 4.0]}).to_csv(path, index=False)
 
     with pytest.raises(ValueError, match="provide signal_column"):
-        load_signal_file(path, sampling_rate_hz=10.0)
+        SignalDatasetLoader().load_file(path, sampling_rate_hz=10.0)
 
 
-def test_load_csv_rejects_multiple_labels_for_one_record(tmp_path: Path) -> None:
-    """A single loaded record cannot represent multiple labels."""
-    path = tmp_path / "multi_label.csv"
-    pd.DataFrame({"signal": [1, 2], "label": ["a", "b"]}).to_csv(path, index=False)
+@pytest.mark.parametrize(
+    ("loader", "suffix"),
+    [
+        (CsvSignalFileLoader(), ".csv"),
+        (TxtSignalFileLoader(), ".txt"),
+        (NpySignalFileLoader(), ".npy"),
+        (WavSignalFileLoader(), ".wav"),
+    ],
+)
+def test_built_in_parsers_share_record_contract(tmp_path: Path, loader, suffix: str) -> None:
+    path = tmp_path / f"record{suffix}"
+    if suffix == ".csv":
+        pd.DataFrame({"signal": [0.0, 1.0]}).to_csv(path, index=False)
+    elif suffix == ".txt":
+        np.savetxt(path, np.array([0.0, 1.0]))
+    elif suffix == ".npy":
+        np.save(path, np.array([0.0, 1.0]))
+    else:
+        wavfile.write(path, 8000, np.array([0, 16384], dtype=np.int16))
 
-    with pytest.raises(ValueError, match="multiple CSV labels"):
-        load_signal_file(path, sampling_rate_hz=100.0, label_column="label")
+    record = loader.load_record(path, sampling_rate_hz=None if suffix == ".wav" else 8000.0)
 
-
-def test_load_txt_requires_sampling_rate_and_returns_record(tmp_path: Path) -> None:
-    """TXT loading reads one-dimensional numeric samples."""
-    path = tmp_path / "record.txt"
-    np.savetxt(path, np.array([0.0, 1.0, 0.0]))
-
-    record = load_signal_file(path, sampling_rate_hz=50.0, label="txt_label")
-
-    np.testing.assert_allclose(record.values, [0.0, 1.0, 0.0])
-    assert record.label == "txt_label"
-    assert record.sampling_rate_hz == 50.0
-
-
-def test_load_npy_reads_one_dimensional_array(tmp_path: Path) -> None:
-    """NPY loading accepts one-dimensional arrays."""
-    path = tmp_path / "record.npy"
-    np.save(path, np.array([1.0, 2.0, 3.0]))
-
-    record = load_signal_file(path, sampling_rate_hz=25.0)
-
-    np.testing.assert_allclose(record.values, [1.0, 2.0, 3.0])
-    assert record.name == "record"
-
-
-def test_load_wav_uses_file_sampling_rate_and_scales_integer_data(tmp_path: Path) -> None:
-    """WAV loading reads the file sampling rate and normalizes integer samples."""
-    path = tmp_path / "record.wav"
-    samples = np.array([0, 16384, -16384], dtype=np.int16)
-    wavfile.write(path, 8000, samples)
-
-    record = load_signal_file(path)
-
+    assert record.provenance.source_path == str(path)
     assert record.sampling_rate_hz == 8000.0
-    assert record.metadata["format"] == "wav"
-    assert record.metadata["original_dtype"] == "int16"
-    np.testing.assert_allclose(record.values, [0.0, 0.5, -0.5], atol=1e-4)
 
 
-def test_load_wav_centers_unsigned_integer_data(tmp_path: Path) -> None:
-    """Unsigned WAV samples are centered so midpoint silence maps to zero."""
-    path = tmp_path / "unsigned.wav"
-    samples = np.array([0, 128, 255], dtype=np.uint8)
-    wavfile.write(path, 8000, samples)
-
-    record = load_signal_file(path)
-
-    assert record.metadata["original_dtype"] == "uint8"
-    np.testing.assert_allclose(record.values, [-1.0, 0.0, 0.9921875])
-
-
-def test_load_signal_file_channels_splits_multi_channel_wav(tmp_path: Path) -> None:
-    """Multi-channel files are represented as explicit single-channel records."""
+def test_wav_loader_scales_samples_and_splits_channels(tmp_path: Path) -> None:
     path = tmp_path / "stereo.wav"
-    samples = np.array([[0, 0], [16384, -16384], [0, 0]], dtype=np.int16)
-    wavfile.write(path, 8000, samples)
+    wavfile.write(path, 8000, np.array([[0, 0], [16384, -16384], [0, 0]], dtype=np.int16))
 
-    records = load_signal_file_channels(path)
+    dataset = SignalDatasetLoader().load_file_channels(path)
 
-    assert [record.name for record in records] == ["stereo_0", "stereo_1"]
-    assert [record.metadata["channel_index"] for record in records] == [0, 1]
-    assert [record.provenance.channel_index for record in records] == [0, 1]
-    assert {record.provenance.source_name for record in records} == {"stereo"}
-    np.testing.assert_allclose(records[0].values, [0.0, 0.5, 0.0], atol=1e-4)
-    np.testing.assert_allclose(records[1].values, [0.0, -0.5, 0.0], atol=1e-4)
+    assert [record.name for record in dataset] == ["stereo_0", "stereo_1"]
+    assert [record.provenance.channel_index for record in dataset] == [0, 1]
+    assert dataset.records[0].provenance.original_dtype == "int16"
+    np.testing.assert_allclose(dataset.records[0].values, [0.0, 0.5, 0.0], atol=1e-4)
 
 
-def test_load_signal_dataset_uses_config_patterns_and_metadata_table(tmp_path: Path) -> None:
-    """Dataset loading discovers configured files and applies external labels."""
+def test_dataset_loading_joins_typed_annotations(tmp_path: Path) -> None:
     data_dir = tmp_path / "raw"
     data_dir.mkdir()
-    signal_path = data_dir / "record.csv"
     pd.DataFrame({"time": [0.0, 0.1, 0.2], "x": [1.0, 0.0, -1.0]}).to_csv(
-        signal_path,
-        index=False,
+        data_dir / "record.csv", index=False
     )
-    metadata_path = tmp_path / "metadata.csv"
-    pd.DataFrame({"file_name": ["record.csv"], "label": ["normal"], "sensor": ["accel"]}).to_csv(
-        metadata_path,
-        index=False,
+    metadata = tmp_path / "metadata.csv"
+    pd.DataFrame(
+        {
+            "file_name": ["record.csv"],
+            "label": ["normal"],
+            "sensor": ["accel"],
+            "split": ["test"],
+            "is_anomalous": [True],
+            "anomaly_kind": ["burst"],
+            "anomaly_start_seconds": [0.1],
+            "anomaly_end_seconds": [0.2],
+        }
+    ).to_csv(metadata, index=False)
+    project = ProjectConfig(
+        paths=PathsConfig(data_dir=data_dir),
+        loading=LoadingConfig(file_patterns=("*.csv",), signal_column="x"),
     )
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        f"""
-paths:
-  data_dir: {data_dir.as_posix()}
-loading:
-  file_patterns:
-    - "*.csv"
-  signal_column: x
-""",
-        encoding="utf-8",
+
+    dataset = SignalDatasetLoader().load_dataset(project, metadata_table=metadata)
+    record = dataset.records[0]
+
+    assert record.label == "normal"
+    assert record.annotations.sensor == "accel"
+    assert record.annotations.split == "test"
+    assert record.annotations.intervals[0].start_seconds == 0.1
+    assert "external_metadata" not in record.attributes
+
+
+def test_dataset_loader_accepts_registered_parser(tmp_path: Path) -> None:
+    (tmp_path / "capture.foo").write_text("custom", encoding="utf-8")
+
+    class FakeLoader:
+        suffix = ".foo"
+
+        def load_record(self, path: Path, **_kwargs: object) -> SignalRecord:
+            return SignalRecord([1.0, 0.0], 2.0, name=path.stem)
+
+        def load_channels(self, path: Path, **kwargs: object) -> list[SignalRecord]:
+            return [self.load_record(path, **kwargs)]
+
+    loader = SignalDatasetLoader({".foo": FakeLoader()})
+    dataset = loader.load_dataset(
+        ProjectConfig(
+            paths=PathsConfig(data_dir=tmp_path),
+            loading=LoadingConfig(file_patterns=("*.foo",)),
+        )
     )
-
-    records = load_signal_dataset(config_path, metadata_table=metadata_path)
-
-    assert len(records) == 1
-    assert records[0].label == "normal"
-    assert records[0].metadata["external_metadata"]["sensor"] == "accel"
-    assert records[0].sampling_rate_hz == pytest.approx(10.0)
+    assert dataset.records[0].name == "capture"
 
 
-def test_non_wav_files_require_sampling_rate(tmp_path: Path) -> None:
-    """Formats without embedded sampling rate require explicit sampling_rate_hz."""
+def test_non_wav_data_without_rate_or_time_axis_fails(tmp_path: Path) -> None:
     path = tmp_path / "record.npy"
     np.save(path, np.array([1.0, 2.0]))
-
     with pytest.raises(ValueError, match="sampling_rate_hz is required"):
-        load_signal_file(path)
+        SignalDatasetLoader().load_file(path)
 
 
-def test_loader_rejects_unsupported_extension(tmp_path: Path) -> None:
-    """Unsupported file formats fail clearly."""
-    path = tmp_path / "record.bin"
-    path.write_bytes(b"not a supported signal file")
+def test_npy_loader_preserves_encoded_dtype_in_provenance(tmp_path: Path) -> None:
+    path = tmp_path / "record.npy"
+    np.save(path, np.array([1, 2], dtype=np.int16))
 
-    with pytest.raises(ValueError, match="Unsupported signal file extension"):
-        load_signal_file(path, sampling_rate_hz=1.0)
+    record = SignalDatasetLoader().load_file(path, sampling_rate_hz=100.0)
+
+    assert record.provenance.original_dtype == "int16"
+    assert record.values.dtype == np.float64
+
+
+def test_dataset_loader_can_skip_malformed_record_files(tmp_path: Path) -> None:
+    pd.DataFrame({"time": [0.0, 0.1], "signal": ["bad", "values"]}).to_csv(
+        tmp_path / "bad.csv", index=False
+    )
+    pd.DataFrame({"time": [0.0, 0.1], "signal": [0.0, 1.0]}).to_csv(
+        tmp_path / "good.csv", index=False
+    )
+    project = ProjectConfig(
+        paths=PathsConfig(data_dir=tmp_path),
+        loading=LoadingConfig(file_patterns=("*.csv",), signal_column="signal"),
+        analysis=AnalysisConfig(modeling=ModelingConfig(enabled=False)),
+    )
+
+    loading = SignalDatasetLoader().load_dataset_result(
+        project, invalid_record_policy="skip"
+    )
+
+    assert [record.provenance.source_name for record in loading.dataset] == ["good"]
+    assert "Loading skipped bad.csv" in loading.notes[0]
+
+
+def test_dataset_loader_can_skip_invalid_record_annotations(tmp_path: Path) -> None:
+    for name in ("bad.csv", "good.csv"):
+        pd.DataFrame({"time": [0.0, 0.1], "signal": [0.0, 1.0]}).to_csv(
+            tmp_path / name, index=False
+        )
+    annotations = pd.DataFrame(
+        {
+            "file_name": ["bad.csv", "good.csv"],
+            "anomaly_start_seconds": [-1.0, 0.0],
+            "anomaly_end_seconds": [0.1, 0.1],
+        }
+    )
+    project = ProjectConfig(
+        paths=PathsConfig(data_dir=tmp_path),
+        loading=LoadingConfig(file_patterns=("*.csv",), signal_column="signal"),
+    )
+
+    loading = SignalDatasetLoader().load_dataset_result(
+        project, metadata_table=annotations, invalid_record_policy="skip"
+    )
+
+    assert [record.provenance.source_name for record in loading.dataset] == ["good"]
+    assert "Loading skipped bad.csv" in loading.notes[0]

@@ -12,16 +12,18 @@ import pytest
 import signal_processing_prep.autoencoders as autoencoders
 from signal_processing_prep.autoencoders import (
     SpectrogramAutoencoderConfig,
+    SpectrogramAutoencoderExperiment,
     run_spectrogram_autoencoder,
     split_autoencoder_demo_records,
     spectrogram_patches_from_records,
 )
 from signal_processing_prep.config import load_config
-from signal_processing_prep.data_loading import load_signal_dataset
+from signal_processing_prep.data_loading import SignalDatasetLoader
 from signal_processing_prep.demo_data import (
+    generate_vibration_anomaly_frame,
     generate_spectrogram_autoencoder_demo_records as generate_demo_records,
 )
-from signal_processing_prep.records import SignalRecord
+from signal_processing_prep.records import RecordAnnotations, SignalDataset, SignalRecord
 
 
 def _write_demo_config(tmp_path):
@@ -46,13 +48,12 @@ analysis:
   window:
     size_seconds: 0.5
     overlap_fraction: 0.8
-
-filtering:
-  enabled: false
-  kind: null
-  low_cut_hz: null
-  high_cut_hz: null
-  order: 4
+  filtering:
+    enabled: false
+    kind: null
+    low_cut_hz: null
+    high_cut_hz: null
+    order: 4
 """,
         encoding="utf-8",
     )
@@ -71,8 +72,20 @@ def _loaded_demo_dataset(tmp_path, *, duration_seconds=2.0, sampling_rate_hz=100
         random_seed=3,
     )
     config_path = _write_demo_config(tmp_path)
-    records = load_signal_dataset(config_path, metadata_table=output_dir / "metadata.csv")
+    records = SignalDatasetLoader().load_dataset(
+        config_path, metadata_table=output_dir / "metadata.csv"
+    ).records
     return split_autoencoder_demo_records(records), metadata, output_dir
+
+
+def test_single_record_demo_generator_is_package_owned_and_deterministic() -> None:
+    """Script-facing demo generation is kept in a testable package module."""
+    first = generate_vibration_anomaly_frame()
+    second = generate_vibration_anomaly_frame()
+
+    assert list(first.columns) == ["time", "voltage"]
+    assert len(first) == 240_000
+    pd.testing.assert_frame_equal(first, second)
 
 
 def test_generate_spectrogram_autoencoder_demo_csv_writes_records_and_metadata(tmp_path) -> None:
@@ -143,8 +156,8 @@ def test_generate_spectrogram_autoencoder_demo_csv_replaces_stale_records(tmp_pa
     assert not stale_path.exists()
 
 
-def test_existing_loader_splits_file_based_demo_dataset(tmp_path) -> None:
-    """Existing data loaders attach metadata that can split train and test records."""
+def test_loader_joins_typed_annotations_for_file_based_demo_dataset(tmp_path) -> None:
+    """Dataset loading exposes train/test and anomaly facts as typed annotations."""
     dataset, metadata, _ = _loaded_demo_dataset(tmp_path)
 
     assert len(dataset.train_records) == 3
@@ -155,11 +168,12 @@ def test_existing_loader_splits_file_based_demo_dataset(tmp_path) -> None:
 
     anomalous = [record for record in dataset.test_records if record.label == "anomalous"]
     for record in anomalous:
-        external_metadata = record.metadata["external_metadata"]
-        assert external_metadata["split"] == "test"
-        assert external_metadata["is_anomalous"] is True
-        assert 0.0 <= external_metadata["anomaly_start_seconds"] < external_metadata["anomaly_end_seconds"]
-        assert external_metadata["anomaly_end_seconds"] <= record.duration_seconds
+        assert record.annotations.split == "test"
+        assert record.annotations.is_anomalous is True
+        assert len(record.annotations.intervals) == 1
+        interval = record.annotations.intervals[0]
+        assert 0.0 <= interval.start_seconds < interval.end_seconds
+        assert interval.end_seconds <= record.duration_seconds
 
 
 def test_notebook_style_loading_resolves_relative_data_dir_from_project_root(
@@ -191,7 +205,9 @@ def test_notebook_style_loading_resolves_relative_data_dir_from_project_root(
         config,
         paths=replace(config.paths, data_dir=project_root / config.paths.data_dir),
     )
-    records = load_signal_dataset(config, metadata_table=output_dir / "metadata.csv")
+    records = SignalDatasetLoader().load_dataset(
+        config, metadata_table=output_dir / "metadata.csv"
+    ).records
     dataset = split_autoencoder_demo_records(records)
 
     assert len(records) == 4
@@ -240,7 +256,7 @@ def test_patch_inspection_variants_show_expected_resolution_and_density_effects(
     transient_record = next(
         record
         for record in dataset.test_records
-        if record.metadata["external_metadata"].get("anomaly_kind") == "transient_tone"
+        if record.annotations.anomaly_kind == "transient_tone"
     )
     baseline = SpectrogramAutoencoderConfig(
         patch_window_seconds=0.5,
@@ -350,13 +366,54 @@ def test_spectrogram_patch_extraction_rejects_axis_mismatch(monkeypatch) -> None
         spectrogram_patches_from_records(records, config)
 
 
-def test_package_imports_without_requiring_torch() -> None:
-    """Public autoencoder helpers can be imported without importing PyTorch eagerly."""
-    import signal_processing_prep
+def test_autoencoder_submodule_imports_without_requiring_torch() -> None:
+    """Specialist autoencoder APIs remain importable without importing PyTorch eagerly."""
+    assert SpectrogramAutoencoderConfig is not None
+    assert SpectrogramAutoencoderExperiment is not None
+    assert spectrogram_patches_from_records is not None
 
-    assert hasattr(signal_processing_prep, "SpectrogramAutoencoderConfig")
-    assert hasattr(signal_processing_prep, "spectrogram_patches_from_records")
-    assert hasattr(signal_processing_prep, "run_spectrogram_autoencoder")
+
+def test_experiment_selects_typed_train_and_test_records_before_training(monkeypatch) -> None:
+    captured = {}
+    train = SignalRecord(
+        np.zeros(100),
+        100.0,
+        label="normal",
+        name="train",
+        annotations=RecordAnnotations(split="train"),
+    )
+    normal_test = SignalRecord(
+        np.zeros(100),
+        100.0,
+        label="normal",
+        name="normal-test",
+        annotations=RecordAnnotations(split="test"),
+    )
+    anomalous_test = SignalRecord(
+        np.zeros(100),
+        100.0,
+        label="anomalous",
+        name="anomalous-test",
+        annotations=RecordAnnotations(split="test", is_anomalous=True),
+    )
+
+    def fake_run(train_records, test_records, config):
+        captured["train"] = train_records
+        captured["test"] = test_records
+        captured["config"] = config
+        return "trained"
+
+    monkeypatch.setattr(autoencoders, "run_spectrogram_autoencoder", fake_run)
+    config = SpectrogramAutoencoderConfig(n_epochs=1)
+
+    result = SpectrogramAutoencoderExperiment(config).run(
+        SignalDataset.from_records([train, normal_test, anomalous_test])
+    )
+
+    assert result == "trained"
+    assert captured["train"] == (train,)
+    assert captured["test"] == (normal_test, anomalous_test)
+    assert captured["config"] == config
 
 
 def test_run_spectrogram_autoencoder_requires_torch_when_missing() -> None:
@@ -391,7 +448,7 @@ def test_spectrogram_autoencoder_tiny_training_run_scores_known_anomalies(tmp_pa
     )
 
     result = run_spectrogram_autoencoder(dataset.train_records, dataset.test_records, config)
-    predictions = result.evaluation.predictions
+    predictions = result.evaluation.prediction_frame
 
     assert len(result.training_losses) == 2
     assert np.isfinite(predictions["anomaly_score"]).all()

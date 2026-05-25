@@ -10,9 +10,10 @@ import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 
+from signal_processing_prep.artifacts import PredictionTable
 from signal_processing_prep.modeling import ModelEvaluation
 from signal_processing_prep.preprocessing import segment_signal
-from signal_processing_prep.records import SignalRecord
+from signal_processing_prep.records import SignalDataset, SignalRecord
 from signal_processing_prep.time_frequency import spectrogram_analysis
 
 
@@ -66,21 +67,27 @@ class SpectrogramAutoencoderResult:
     reconstructed_test_patches: NDArray[np.float64]
 
 
+@dataclass(frozen=True)
+class SpectrogramAutoencoderExperiment:
+    """Configured optional end-to-end spectrogram autoencoder experiment."""
+
+    config: SpectrogramAutoencoderConfig = SpectrogramAutoencoderConfig()
+
+    def run(self, dataset: SignalDataset) -> SpectrogramAutoencoderResult:
+        """Select annotated train/test records, train, and score held-out patches."""
+        split = split_autoencoder_demo_records(dataset.records)
+        return run_spectrogram_autoencoder(split.train_records, split.test_records, self.config)
+
+
 def split_autoencoder_demo_records(
     records: Sequence[SignalRecord],
 ) -> SpectrogramAutoencoderDemoDataset:
-    """Split loaded demo records into normal training records and mixed test records.
-
-    This helper expects records loaded with the existing data loaders and a
-    metadata table containing a ``split`` column. Metadata table rows are stored
-    by the loader under ``record.metadata["external_metadata"]``.
-    """
+    """Split typed records into normal training records and mixed test records."""
     train_records: list[SignalRecord] = []
     test_records: list[SignalRecord] = []
     for record in records:
-        metadata = _record_external_metadata(record)
-        split = str(metadata.get("split", "")).lower()
-        label = str(record.label or metadata.get("label", "")).lower()
+        split = str(record.annotations.split or "").lower()
+        label = str(record.label or "").lower()
         if split == "train":
             if label != "normal":
                 raise ValueError("Autoencoder training records must be labeled normal.")
@@ -224,7 +231,7 @@ def run_spectrogram_autoencoder(
             "threshold_quantile": float(config.threshold_quantile),
             "final_training_loss": float(training_losses[-1]) if training_losses else float("nan"),
         },
-        predictions=prediction_frame,
+        predictions=PredictionTable.anomaly_scores(prediction_frame),
         split_strategy="trained on synthetic normal records; scored held-out synthetic test patches",
     )
     return SpectrogramAutoencoderResult(
@@ -263,15 +270,12 @@ def _spectrogram_patch(
 
 
 def _patch_metadata(record: SignalRecord, window: SignalRecord) -> dict[str, object]:
-    start = float(window.metadata["window_start_seconds"])
-    end = float(window.metadata["window_end_seconds"])
+    if window.segment_span is None:
+        raise ValueError("Spectrogram patches require records created by segment_signal().")
+    start = window.segment_span.start_seconds
+    end = window.segment_span.end_seconds
     intervals = _anomaly_intervals(record)
     overlaps = any(start < interval["end_seconds"] and end > interval["start_seconds"] for interval in intervals)
-    external_metadata = _record_external_metadata(record)
-    anomaly_kind = record.metadata.get("anomaly_kind") or external_metadata.get("anomaly_kind")
-    is_anomalous = _metadata_bool(
-        record.metadata.get("is_anomalous", external_metadata.get("is_anomalous", False))
-    )
     return {
         "record_name": record.name,
         "label": record.label,
@@ -279,46 +283,16 @@ def _patch_metadata(record: SignalRecord, window: SignalRecord) -> dict[str, obj
         "patch_end_seconds": end,
         "patch_center_seconds": 0.5 * (start + end),
         "known_anomaly_overlap": bool(overlaps),
-        "is_synthetic_anomaly_record": is_anomalous,
-        "anomaly_kind": anomaly_kind,
+        "is_synthetic_anomaly_record": bool(record.annotations.is_anomalous),
+        "anomaly_kind": record.annotations.anomaly_kind,
     }
 
 
 def _anomaly_intervals(record: SignalRecord) -> list[dict[str, float]]:
-    intervals = record.metadata.get("anomaly_intervals", [])
-    if not isinstance(intervals, list):
-        return []
-    parsed: list[dict[str, float]] = []
-    for interval in intervals:
-        if not isinstance(interval, dict):
-            continue
-        start = interval.get("start_seconds")
-        end = interval.get("end_seconds")
-        if isinstance(start, (int, float)) and isinstance(end, (int, float)) and start < end:
-            parsed.append({"start_seconds": float(start), "end_seconds": float(end)})
-    if parsed:
-        return parsed
-    external_metadata = _record_external_metadata(record)
-    start = external_metadata.get("anomaly_start_seconds")
-    end = external_metadata.get("anomaly_end_seconds")
-    if _is_number(start) and _is_number(end) and float(start) < float(end):
-        parsed.append({"start_seconds": float(start), "end_seconds": float(end)})
-    return parsed
-
-
-def _record_external_metadata(record: SignalRecord) -> dict[str, Any]:
-    metadata = record.metadata.get("external_metadata")
-    return dict(metadata) if isinstance(metadata, dict) else {}
-
-
-def _is_number(value: object) -> bool:
-    return isinstance(value, (int, float, np.integer, np.floating)) and np.isfinite(value)
-
-
-def _metadata_bool(value: object) -> bool:
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "y"}
-    return bool(value)
+    return [
+        {"start_seconds": interval.start_seconds, "end_seconds": interval.end_seconds}
+        for interval in record.annotations.intervals
+    ]
 
 
 def _normalize_patch_sets(

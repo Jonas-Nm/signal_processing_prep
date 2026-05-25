@@ -2,7 +2,7 @@
 
 ## Summary
 
-This repository will grow in small, reviewable slices. The target is a lightweight, reusable Python toolkit for exploratory time-series signal analysis, with tested source modules and a notebook walkthrough for interview-style presentation.
+This repository grows in small, reviewable slices. The target is a lightweight, reusable Python toolkit for exploratory time-series signal analysis, with tested source modules and notebook walkthroughs for interview-style presentation. Version `0.2.0` uses the typed workflow architecture described in `docs/architecture.md`.
 
 The project should remain modular and easy to explain. Core analysis logic belongs in importable Python modules, while notebooks and reports should orchestrate or present results without owning important implementation details.
 
@@ -33,6 +33,7 @@ signal_processing_prep/
 |       |-- config.py
 |       |-- data_loading.py
 |       |-- records.py
+|       |-- artifacts.py
 |       |-- synthetic.py
 |       |-- quality.py
 |       |-- preprocessing.py
@@ -57,19 +58,20 @@ signal_processing_prep/
 ## Module Responsibilities
 
 - `config.py`: load and validate YAML configuration into typed structures.
-- `data_loading.py`: load CSV, TXT, NPY, and WAV files into a shared signal record model.
-- `records.py`: define shared dataclasses such as `SignalRecord`, typed provenance, and acquisition diagnostics.
+- `data_loading.py`: expose `SignalDatasetLoader`, the facade assembling CSV, TXT, NPY, and WAV records into datasets.
+- `records.py`: define immutable `SignalRecord` and `SignalDataset` boundaries, typed provenance, annotations, segment spans, processing history, and acquisition diagnostics.
+- `artifacts.py`: validate feature, quality, and prediction table roles while exposing DataFrame inspection copies.
 - `synthetic.py`: generate example signals for demos and tests.
-- `quality.py`: check duration, missing values, clipping, scaling, and stationarity indicators.
-- `preprocessing.py`: provide optional filtering and windowing utilities.
+- `quality.py`: provide `QualityAssessor` and interpretable quality observations.
+- `preprocessing.py`: provide `SignalPreprocessor` plus optional transformation kernels.
 - `time_domain.py`: compute time-domain metrics.
 - `frequency_domain.py`: compute FFT, PSD, dominant frequency, spectral features, and band energies.
 - `time_frequency.py`: compute STFT, spectrogram, transient energy, and related features.
-- `features.py`: combine interpretable features into a pandas DataFrame.
-- `modeling.py`: provide simple supervised and unsupervised baselines.
+- `features.py`: provide `FeatureExtractor` returning typed feature artifacts.
+- `modeling.py`: provide configured scorer objects and a supervised baseline suite.
 - `plotting.py`: create presentation-ready matplotlib figures.
-- `reporting.py`: generate concise Markdown summaries.
-- `pipeline.py`: orchestrate configured or in-memory workflows while delegating implementation to focused modules.
+- `reporting.py`: build and save concise report objects.
+- `pipeline.py`: expose `SignalAnalysisPipeline` and typed results while delegating implementation to focused modules.
 
 ## Phase 0: Planning Docs And AGENTS Cleanup
 
@@ -107,7 +109,7 @@ Acceptance criteria:
 
 ## Phase 2: Core Data Model And Synthetic Signals
 
-- Add a `SignalRecord` dataclass for signal values, sampling rate, label, name, and metadata.
+- Add a `SignalRecord` dataclass for immutable signal values, sampling rate, label, typed identity and annotations, and optional user attributes.
 - Add synthetic generators for sine, noisy sine, impulse train, chirp, clipped signal, and transient burst.
 - Add tests for signal shape, sampling rate, labels, and basic generated properties.
 

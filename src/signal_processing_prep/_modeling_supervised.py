@@ -15,15 +15,15 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from signal_processing_prep._modeling_common import (
-    DEFAULT_EXCLUDED_COLUMNS,
     SUPERVISED_METADATA_COLUMNS,
     ModelEvaluation,
     attach_available_metadata,
 )
+from signal_processing_prep.artifacts import FeatureTable, PredictionTable
 
 
 def run_supervised_baselines(
-    features: pd.DataFrame,
+    features: FeatureTable,
     *,
     label_column: str = "label",
     group_column: str | None = None,
@@ -31,7 +31,7 @@ def run_supervised_baselines(
     random_state: int = 0,
 ) -> dict[str, ModelEvaluation]:
     """Train interpretable baselines using source-grouped evaluation where possible."""
-    labeled, y = _supervised_labeled_rows(features, label_column)
+    labeled, y = _supervised_labeled_rows(features.to_dataframe(), label_column)
     if not 0.0 < test_size < 1.0:
         raise ValueError("test_size must be in the interval (0, 1).")
     if y.nunique() < 2:
@@ -56,7 +56,7 @@ def run_supervised_baselines(
             y,
             train_index,
             test_index,
-            label_column=label_column,
+            feature_columns=features.feature_columns,
         )
     )
     models: dict[str, Any] = {
@@ -142,7 +142,7 @@ def _fit_supervised_model(
         estimator=estimator,
         feature_columns=feature_columns,
         metrics=metrics,
-        predictions=prediction_frame,
+        predictions=PredictionTable.classification(prediction_frame),
         split_strategy=split_strategy,
         labels=labels,
         confusion_matrix=confusion_matrix(y_test, predicted, labels=list(labels)),
@@ -167,12 +167,9 @@ def _supervised_feature_matrices(
     train_index: pd.Index,
     test_index: pd.Index,
     *,
-    label_column: str,
+    feature_columns: tuple[str, ...],
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.DataFrame, tuple[str, ...]]:
-    excluded = DEFAULT_EXCLUDED_COLUMNS | {label_column}
-    training = labeled.loc[train_index].drop(
-        columns=[column for column in excluded if column in labeled.columns]
-    )
+    training = labeled.loc[train_index, list(feature_columns)]
     training = training.select_dtypes(include=[np.number]).replace([np.inf, -np.inf], np.nan)
     training = training.dropna(axis=1, how="all")
     if training.empty:

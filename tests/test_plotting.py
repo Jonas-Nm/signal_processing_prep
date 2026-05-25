@@ -92,7 +92,7 @@ def test_plot_time_signal_envelope_downsampling_preserves_impulse() -> None:
         sampling_rate_hz=record.sampling_rate_hz,
         label=record.label,
         name=record.name,
-        metadata=record.metadata,
+        attributes=record.attributes,
     )
 
     fig, ax = plot_time_signal(impulse_record, max_points=100)

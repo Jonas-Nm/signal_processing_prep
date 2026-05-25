@@ -9,6 +9,9 @@ import numpy as np
 import pandas as pd
 from scipy import signal as scipy_signal
 
+from signal_processing_prep.artifacts import FEATURE_METADATA_COLUMNS, FeatureTable
+from signal_processing_prep.config import AnalysisConfig
+from signal_processing_prep.errors import ConfigurationError, RecordDataError
 from signal_processing_prep.frequency_domain import (
     band_energy,
     dominant_frequency,
@@ -37,6 +40,11 @@ class FrequencyBand:
     low_hz: float
     high_hz: float
 
+    def __post_init__(self) -> None:
+        """Validate a named band once at construction."""
+        if self.low_hz < 0 or self.high_hz <= self.low_hz:
+            raise ConfigurationError(f"Invalid frequency band '{self.name}'.")
+
 
 @dataclass(frozen=True)
 class FeatureExtractionConfig:
@@ -46,6 +54,15 @@ class FeatureExtractionConfig:
     spectrogram_window_seconds: float = 0.1
     spectrogram_step_seconds: float | None = None
     high_frequency_cutoff_hz: float | None = None
+
+    def __post_init__(self) -> None:
+        """Validate record-feature extraction policy once."""
+        if self.spectrogram_window_seconds <= 0:
+            raise ConfigurationError("spectrogram_window_seconds must be positive.")
+        if self.spectrogram_step_seconds is not None and self.spectrogram_step_seconds <= 0:
+            raise ConfigurationError("spectrogram_step_seconds must be positive.")
+        if self.high_frequency_cutoff_hz is not None and self.high_frequency_cutoff_hz < 0:
+            raise ConfigurationError("high_frequency_cutoff_hz must be non-negative.")
 
 
 @dataclass(frozen=True)
@@ -60,36 +77,63 @@ class SlidingWindowConfig:
     frequency_window: str | tuple[str, float] | None = "hann"
     normalize_frequency_window_power: bool = True
 
-
-def extract_features(
-    records: Sequence[SignalRecord],
-    config: FeatureExtractionConfig | None = None,
-) -> pd.DataFrame:
-    """Extract one row of interpretable features per signal record.
-
-    Frequency bands are always represented as columns. Bands that sit entirely
-    above a record's Nyquist frequency are reported as ``NaN`` for that record,
-    which keeps generic configurations usable across mixed sampling rates.
-    """
-    if config is None:
-        config = FeatureExtractionConfig()
-    _validate_feature_config(config)
-
-    for record in records:
-        _validate_feature_record(record)
-    rows = [_record_features(record, config) for record in records]
-    return pd.DataFrame(rows)
+    def __post_init__(self) -> None:
+        """Validate localized feature policy once."""
+        if self.window_seconds <= 0:
+            raise ConfigurationError("window_seconds must be positive.")
+        if self.step_seconds <= 0:
+            raise ConfigurationError("step_seconds must be positive.")
+        if self.step_seconds > self.window_seconds:
+            raise ConfigurationError("step_seconds must not exceed window_seconds.")
+        if not self.include_time_domain and not self.include_frequency_domain:
+            raise ConfigurationError("At least one feature group must be enabled.")
 
 
-def sliding_window_features(
+@dataclass(frozen=True)
+class FeatureExtractor:
+    """Configured extractor producing validated feature-table artifacts."""
+
+    config: FeatureExtractionConfig = field(default_factory=FeatureExtractionConfig)
+
+    @classmethod
+    def from_analysis_config(cls, config: AnalysisConfig) -> FeatureExtractor:
+        """Construct record feature policy from the unified analysis config."""
+        return cls(
+            FeatureExtractionConfig(
+                frequency_bands=frequency_bands_from_mapping(dict(config.frequency_bands_hz)),
+                spectrogram_window_seconds=config.spectrogram_window_seconds,
+                spectrogram_step_seconds=config.spectrogram_step_seconds,
+                high_frequency_cutoff_hz=config.high_frequency_cutoff_hz,
+            )
+        )
+
+    def extract_records(self, records: Sequence[SignalRecord]) -> FeatureTable:
+        """Extract one typed feature row per signal record."""
+        for record in records:
+            _validate_feature_record(record)
+        frame = pd.DataFrame([_record_features(record, self.config) for record in records])
+        return FeatureTable.from_dataframe(
+            frame,
+            feature_columns=_calculated_feature_columns(frame),
+        )
+
+    def extract_windows(
+        self,
+        record: SignalRecord,
+        config: SlidingWindowConfig,
+    ) -> FeatureTable:
+        """Extract time-localized rows as a typed feature table."""
+        frame = _sliding_window_dataframe(record, config)
+        return FeatureTable.from_dataframe(
+            frame,
+            feature_columns=_calculated_feature_columns(frame),
+        )
+
+def _sliding_window_dataframe(
     record: SignalRecord,
     config: SlidingWindowConfig,
 ) -> pd.DataFrame:
-    """Extract interpretable features over sliding time windows.
-
-    The returned DataFrame has one row per window and includes explicit timing
-    columns so feature trajectories can be plotted or aligned with events.
-    """
+    """Build analytical window-feature rows before typed table validation."""
     _validate_feature_record(record)
     window_samples = _seconds_to_sample_count(
         config.window_seconds,
@@ -101,12 +145,8 @@ def sliding_window_features(
         record.sampling_rate_hz,
         field_name="step_seconds",
     )
-    if config.step_seconds > config.window_seconds:
-        raise ValueError("step_seconds must not exceed window_seconds.")
     if window_samples > record.n_samples:
-        raise ValueError("window_seconds must not exceed the record duration.")
-    if not config.include_time_domain and not config.include_frequency_domain:
-        raise ValueError("At least one feature group must be enabled.")
+        raise RecordDataError("window_seconds must not exceed the record duration.")
 
     rows: list[dict[str, float | str | None]] = []
     for start_index in range(0, record.n_samples - window_samples + 1, step_samples):
@@ -150,6 +190,15 @@ def frequency_bands_from_mapping(
     return tuple(
         FrequencyBand(name=name, low_hz=low_hz, high_hz=high_hz)
         for name, (low_hz, high_hz) in bands_hz.items()
+    )
+
+
+def _calculated_feature_columns(frame: pd.DataFrame) -> tuple[str, ...]:
+    """Return calculation outputs separately from row identity metadata."""
+    return tuple(
+        str(column)
+        for column in frame.columns
+        if str(column) not in FEATURE_METADATA_COLUMNS
     )
 
 
@@ -291,26 +340,9 @@ def _time_frequency_features(
     }
 
 
-def _validate_feature_config(config: FeatureExtractionConfig) -> None:
-    if config.spectrogram_window_seconds <= 0:
-        raise ValueError("spectrogram_window_seconds must be positive.")
-    if config.spectrogram_step_seconds is not None and config.spectrogram_step_seconds <= 0:
-        raise ValueError("spectrogram_step_seconds must be positive.")
-    if config.high_frequency_cutoff_hz is not None and config.high_frequency_cutoff_hz < 0:
-        raise ValueError("high_frequency_cutoff_hz must be non-negative.")
-
-    for band in config.frequency_bands:
-        if band.low_hz < 0:
-            raise ValueError(f"Frequency band '{band.name}' low_hz must be non-negative.")
-        if band.high_hz <= band.low_hz:
-            raise ValueError(
-                f"Frequency band '{band.name}' high_hz must be greater than low_hz."
-            )
-
-
 def _validate_feature_record(record: SignalRecord) -> None:
     if not np.isfinite(record.values).all():
-        raise ValueError(
+        raise RecordDataError(
             f"Record {record.name or '<unnamed>'} contains non-finite samples; "
             "run quality checks and clean, impute, or skip the record before feature extraction."
         )
@@ -354,5 +386,5 @@ def _seconds_to_sample_count(
     field_name: str,
 ) -> int:
     if seconds <= 0:
-        raise ValueError(f"{field_name} must be positive.")
+        raise ConfigurationError(f"{field_name} must be positive.")
     return max(1, int(round(seconds * sampling_rate_hz)))

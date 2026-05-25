@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "signal-processing-prep"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reusable signal-processing analysis toolkit for exploratory time-series condition monitoring tasks."
 readme = "README.md"
 requires-python = ">=3.11"

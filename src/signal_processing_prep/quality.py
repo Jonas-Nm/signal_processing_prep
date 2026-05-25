@@ -8,24 +8,9 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from signal_processing_prep.artifacts import QualityTable
+from signal_processing_prep.config import QualityConfig
 from signal_processing_prep.records import SignalRecord
-
-
-@dataclass(frozen=True)
-class QualityCheckConfig:
-    """Thresholds used by signal quality checks."""
-
-    min_duration_seconds: float | None = None
-    clipping_fraction_threshold: float = 0.01
-    clipping_tolerance: float = 1e-9
-    near_constant_std_threshold: float = 1e-12
-    large_amplitude_threshold: float | None = None
-    stationarity_window_seconds: float | None = None
-    stationarity_mean_drift_threshold: float = 0.25
-    stationarity_std_cv_threshold: float = 0.5
-    time_step_jitter_threshold: float = 0.01
-    time_gap_count_threshold: int = 0
-    sampling_rate_mismatch_threshold: float = 0.01
 
 
 @dataclass(frozen=True)
@@ -89,12 +74,11 @@ class QualityReport:
 
 def assess_signal_quality(
     record: SignalRecord,
-    config: QualityCheckConfig | None = None,
+    config: QualityConfig | None = None,
 ) -> QualityReport:
     """Assess duration, missing values, clipping, scaling, and stationarity."""
     if config is None:
-        config = QualityCheckConfig()
-    _validate_quality_config(config)
+        config = QualityConfig()
 
     values = record.values
     finite_mask = np.isfinite(values)
@@ -181,37 +165,29 @@ def assess_signal_quality(
 
 def assess_dataset_quality(
     records: Sequence[SignalRecord],
-    config: QualityCheckConfig | None = None,
-) -> pd.DataFrame:
-    """Return one quality-check row per signal record."""
+    config: QualityConfig | None = None,
+) -> QualityTable:
+    """Return typed quality observations for signal records."""
     columns = list(_quality_report_columns())
     if len(records) == 0:
-        return pd.DataFrame(columns=columns)
-    return pd.DataFrame(
-        [assess_signal_quality(record, config).to_dict() for record in records],
-        columns=columns,
+        return QualityTable(pd.DataFrame(columns=columns))
+    return QualityTable(
+        pd.DataFrame(
+            [assess_signal_quality(record, config).to_dict() for record in records],
+            columns=columns,
+        )
     )
 
 
-def _validate_quality_config(config: QualityCheckConfig) -> None:
-    if config.min_duration_seconds is not None and config.min_duration_seconds <= 0:
-        raise ValueError("min_duration_seconds must be positive.")
-    if not 0.0 <= config.clipping_fraction_threshold <= 1.0:
-        raise ValueError("clipping_fraction_threshold must be between 0 and 1.")
-    if config.clipping_tolerance < 0:
-        raise ValueError("clipping_tolerance must be non-negative.")
-    if config.near_constant_std_threshold < 0:
-        raise ValueError("near_constant_std_threshold must be non-negative.")
-    if config.large_amplitude_threshold is not None and config.large_amplitude_threshold <= 0:
-        raise ValueError("large_amplitude_threshold must be positive.")
-    if config.stationarity_window_seconds is not None and config.stationarity_window_seconds <= 0:
-        raise ValueError("stationarity_window_seconds must be positive.")
-    if config.time_step_jitter_threshold < 0:
-        raise ValueError("time_step_jitter_threshold must be non-negative.")
-    if config.time_gap_count_threshold < 0:
-        raise ValueError("time_gap_count_threshold must be non-negative.")
-    if config.sampling_rate_mismatch_threshold < 0:
-        raise ValueError("sampling_rate_mismatch_threshold must be non-negative.")
+@dataclass(frozen=True)
+class QualityAssessor:
+    """Pipeline collaborator producing typed quality observations."""
+
+    config: QualityConfig = QualityConfig()
+
+    def assess(self, records: Sequence[SignalRecord]) -> QualityTable:
+        """Assess all supplied records through the configured thresholds."""
+        return assess_dataset_quality(records, self.config)
 
 
 def _quality_report_columns() -> tuple[str, ...]:
@@ -288,14 +264,10 @@ def _stationarity_indicators(
 
 def _time_axis_indicators(
     record: SignalRecord,
-    config: QualityCheckConfig,
+    config: QualityConfig,
 ) -> tuple[float, int, bool]:
     jitter = record.acquisition.time_step_jitter_fraction
-    if jitter is None:
-        jitter = _metadata_float(record.metadata.get("time_step_jitter_fraction"))
     gap_count = record.acquisition.time_gap_count
-    if gap_count is None:
-        gap_count = _metadata_int(record.metadata.get("time_gap_count"))
     if jitter is None:
         jitter = 0.0
     if gap_count is None:
@@ -303,44 +275,19 @@ def _time_axis_indicators(
     irregular = (
         jitter > config.time_step_jitter_threshold
         or gap_count > config.time_gap_count_threshold
-        or (
-            record.acquisition.time_axis_valid
-            if record.acquisition.time_axis_valid is not None
-            else record.metadata.get("time_axis_valid")
-        )
-        is False
+        or record.acquisition.time_axis_valid is False
     )
     return jitter, gap_count, irregular
 
 
 def _sampling_rate_mismatch_indicators(
     record: SignalRecord,
-    config: QualityCheckConfig,
+    config: QualityConfig,
 ) -> tuple[float, bool]:
     mismatch_fraction = record.acquisition.sampling_rate_mismatch_fraction
     if mismatch_fraction is None:
-        mismatch_fraction = _metadata_float(record.metadata.get("sampling_rate_mismatch_fraction"))
-    if mismatch_fraction is None:
         mismatch_fraction = 0.0
     return mismatch_fraction, mismatch_fraction > config.sampling_rate_mismatch_threshold
-
-
-def _metadata_float(value: object) -> float | None:
-    try:
-        if value is None or pd.isna(value):
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _metadata_int(value: object) -> int | None:
-    try:
-        if value is None or pd.isna(value):
-            return None
-        return int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _plateau_mask(mask: np.ndarray) -> np.ndarray:
@@ -359,7 +306,7 @@ def _plateau_mask(mask: np.ndarray) -> np.ndarray:
 
 def _quality_issues(
     record: SignalRecord,
-    config: QualityCheckConfig,
+    config: QualityConfig,
     *,
     has_missing_values: bool,
     is_clipped: bool,

@@ -1,147 +1,96 @@
-"""Tests for high-level analysis pipeline orchestration."""
+"""Tests for typed high-level workflow orchestration."""
 
-import json
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from signal_processing_prep.config import FilteringConfig, load_config
-from signal_processing_prep.features import FrequencyBand
+from signal_processing_prep._modeling_common import ModelEvaluation
+from signal_processing_prep.artifacts import FeatureTable, PredictionTable, QualityTable
+from signal_processing_prep.config import AnalysisConfig, FilteringConfig, ModelingConfig
+from signal_processing_prep.errors import ConfigurationError, RecordDataError
 from signal_processing_prep.frequency_domain import band_energy
-from signal_processing_prep.pipeline import (
-    AnalysisPipelineConfig,
-    analyze_dataset,
-    analyze_records,
-    run_synthetic_analysis,
-)
+from signal_processing_prep.pipeline import SignalAnalysisPipeline, run_synthetic_analysis
+from signal_processing_prep.reporting import AnalysisReport
 from signal_processing_prep.synthetic import add_signals, sine_wave
 
 
-def test_run_synthetic_analysis_produces_core_artifacts() -> None:
-    """The synthetic pipeline produces quality, features, modeling, and summary outputs."""
+def test_synthetic_analysis_produces_typed_artifacts_and_views() -> None:
     result = run_synthetic_analysis(
-        AnalysisPipelineConfig(
-            frequency_bands=(FrequencyBand("low", 0.0, 100.0),),
-            random_state=1,
+        AnalysisConfig(
+            frequency_bands_hz={"low": (0.0, 100.0)},
+            modeling=ModelingConfig(random_state=1),
         )
     )
 
     assert len(result.records) == 6
-    assert result.quality.shape[0] == 6
-    assert result.features.shape[0] == 6
-    assert "band_energy_low" in result.features.columns
+    assert result.quality_frame.shape[0] == 6
+    assert result.feature_frame.shape[0] == 6
+    assert "band_energy_low" in result.feature_frame.columns
     assert result.anomaly_model is not None
-    assert result.supervised_models == {}
-    assert "Supervised baselines skipped" in " ".join(result.modeling_notes)
     assert "# Signal Analysis Summary" in result.markdown_summary
 
 
-def test_analyze_records_uses_supervised_models_when_labels_are_sufficient() -> None:
-    """Supervised baselines are selected when labels support a train/test split."""
+def test_pipeline_uses_supervised_suite_when_labels_are_sufficient() -> None:
     records = [
-        sine_wave(frequency_hz=10.0, label="normal", name="n1"),
-        sine_wave(frequency_hz=11.0, label="normal", name="n2"),
-        sine_wave(frequency_hz=12.0, label="normal", name="n3"),
-        sine_wave(frequency_hz=13.0, label="normal", name="n4"),
-        sine_wave(frequency_hz=80.0, label="fault", name="f1"),
-        sine_wave(frequency_hz=81.0, label="fault", name="f2"),
-        sine_wave(frequency_hz=82.0, label="fault", name="f3"),
-        sine_wave(frequency_hz=83.0, label="fault", name="f4"),
+        sine_wave(frequency_hz=10.0 + index, label="normal", name=f"n{index}")
+        for index in range(4)
+    ] + [
+        sine_wave(frequency_hz=80.0 + index, label="fault", name=f"f{index}")
+        for index in range(4)
     ]
 
-    result = analyze_records(records, AnalysisPipelineConfig(random_state=2))
+    result = SignalAnalysisPipeline(AnalysisConfig(modeling=ModelingConfig(random_state=2))).run_records(records)
 
     assert set(result.supervised_models) == {"logistic_regression", "random_forest"}
     assert result.anomaly_model is None
-    assert isinstance(result.features, pd.DataFrame)
     assert "accuracy" in result.markdown_summary
 
 
-def test_analyze_records_also_scores_anomalies_when_some_rows_are_unlabeled() -> None:
-    """Partially labeled datasets can train supervised baselines and still score anomalies."""
-    records = [
-        sine_wave(frequency_hz=10.0, label="normal", name="n1"),
-        sine_wave(frequency_hz=11.0, label="normal", name="n2"),
-        sine_wave(frequency_hz=12.0, label="normal", name="n3"),
-        sine_wave(frequency_hz=13.0, label="normal", name="n4"),
-        sine_wave(frequency_hz=80.0, label="fault", name="f1"),
-        sine_wave(frequency_hz=81.0, label="fault", name="f2"),
-        sine_wave(frequency_hz=82.0, label="fault", name="f3"),
-        sine_wave(frequency_hz=83.0, label="fault", name="f4"),
-        sine_wave(frequency_hz=200.0, label=None, name="unknown"),
-    ]
-
-    result = analyze_records(records, AnalysisPipelineConfig(random_state=2))
-
-    assert set(result.supervised_models) == {"logistic_regression", "random_forest"}
-    assert result.anomaly_model is not None
-    assert result.anomaly_model.predictions.shape[0] == 9
-    assert "some rows were unlabeled" in " ".join(result.modeling_notes)
-
-
-def test_analyze_records_applies_optional_filter_before_features() -> None:
-    """Configured filtering is part of pipeline feature extraction."""
-    low = sine_wave(frequency_hz=20.0, duration_seconds=2.0, sampling_rate_hz=1000.0)
-    high = sine_wave(frequency_hz=200.0, duration_seconds=2.0, sampling_rate_hz=1000.0)
-    mixed = add_signals([low, high], label=None, name="mixed")
-
-    result = analyze_records(
-        [mixed],
-        AnalysisPipelineConfig(
-            run_modeling=False,
-            filtering=FilteringConfig(enabled=True, kind="lowpass", high_cut_hz=50.0),
-        ),
+def test_pipeline_filtering_is_recorded_in_processing_history() -> None:
+    mixed = add_signals(
+        [
+            sine_wave(frequency_hz=20.0, duration_seconds=2.0, sampling_rate_hz=1000.0),
+            sine_wave(frequency_hz=200.0, duration_seconds=2.0, sampling_rate_hz=1000.0),
+        ],
+        name="mixed",
     )
+    result = SignalAnalysisPipeline(
+        AnalysisConfig(
+            filtering=FilteringConfig(enabled=True, kind="lowpass", high_cut_hz=50.0),
+            modeling=ModelingConfig(enabled=False),
+        )
+    ).run_records([mixed])
 
-    assert result.records[0].metadata["preprocessing"]["filter_kind"] == "lowpass"
-    assert result.features.loc[0, "dominant_frequency_hz"] == pytest.approx(20.0)
+    assert result.records[0].processing_history[-1].operation == "filter"
+    assert result.records[0].processing_history[-1].parameters["filter_kind"] == "lowpass"
+    assert result.feature_frame.loc[0, "dominant_frequency_hz"] == pytest.approx(20.0)
     assert band_energy(result.records[0], low_hz=190.0, high_hz=210.0) < 0.05
 
 
-def test_analyze_records_can_disable_modeling() -> None:
-    """Modeling remains optional in the pipeline."""
-    result = analyze_records(
-        [sine_wave(name="demo")],
-        AnalysisPipelineConfig(run_modeling=False),
-    )
+def test_pipeline_skips_only_record_data_failures() -> None:
+    good = sine_wave(name="good")
+    bad = sine_wave(name="bad")
+    invalid_values = bad.values.copy()
+    invalid_values.setflags(write=True)
+    invalid_values[3] = np.nan
+    bad = type(bad)(invalid_values, bad.sampling_rate_hz, name="bad")
 
-    assert result.supervised_models == {}
-    assert result.anomaly_model is None
-    assert "Modeling was disabled or skipped" in result.markdown_summary
+    result = SignalAnalysisPipeline(
+        AnalysisConfig(modeling=ModelingConfig(enabled=False), invalid_record_policy="skip")
+    ).run_records([good, bad])
 
-
-def test_analyze_records_skips_invalid_feature_records_with_note() -> None:
-    """The pipeline documents invalid records instead of poisoning feature tables."""
-    good = sine_wave(name="good", label=None)
-    bad = sine_wave(name="bad", label=None)
-    bad = type(bad)(
-        values=pd.Series(bad.values).mask(lambda series: series.index == 3).to_numpy(),
-        sampling_rate_hz=bad.sampling_rate_hz,
-        label=bad.label,
-        name=bad.name,
-        metadata=bad.metadata,
-    )
-
-    result = analyze_records(
-        [good, bad],
-        AnalysisPipelineConfig(run_modeling=False, invalid_record_policy="skip"),
-    )
-
-    assert result.features["record_name"].tolist() == ["good"]
+    assert [record.name for record in result.records] == ["good"]
+    assert result.quality_frame["record_name"].tolist() == ["good", "bad"]
+    assert result.feature_frame["record_name"].tolist() == ["good"]
     assert any("Feature extraction skipped bad" in note for note in result.processing_notes)
-    assert "Processing notes" in result.markdown_summary
+
+    with pytest.raises(ConfigurationError, match="spectrogram_window_seconds"):
+        SignalAnalysisPipeline(AnalysisConfig(spectrogram_window_seconds=-1.0))
 
 
-def test_analyze_records_rejects_empty_input() -> None:
-    """Empty datasets fail clearly."""
-    with pytest.raises(ValueError, match="At least one SignalRecord"):
-        analyze_records([])
-
-
-def test_configured_dataset_analysis_maps_frequency_bands_and_filtering(tmp_path: Path) -> None:
-    """The high-level configured workflow applies analysis-relevant YAML settings."""
+def test_pipeline_can_be_built_from_yaml_and_load_dataset(tmp_path: Path) -> None:
     time = np.arange(2000, dtype=float) / 1000.0
     values = np.sin(2.0 * np.pi * 20.0 * time) + np.sin(2.0 * np.pi * 200.0 * time)
     pd.DataFrame({"time": time, "signal": values}).to_csv(tmp_path / "mixed.csv", index=False)
@@ -156,37 +105,157 @@ loading:
 analysis:
   frequency_bands_hz:
     target: [0, 50]
-filtering:
-  enabled: true
-  kind: lowpass
-  high_cut_hz: 50
+  filtering:
+    enabled: true
+    kind: lowpass
+    high_cut_hz: 50
+  modeling:
+    enabled: false
 """,
         encoding="utf-8",
     )
 
-    result = analyze_dataset(config_path, pipeline_config=None)
-    runtime = AnalysisPipelineConfig.from_project_config(load_config(config_path), run_modeling=False)
+    result = SignalAnalysisPipeline.from_config(config_path).run_dataset()
 
-    assert "band_energy_target" in result.features.columns
-    assert runtime.frequency_bands[0].name == "target"
-    assert result.records[0].metadata["preprocessing"]["filter_kind"] == "lowpass"
-    assert result.features.loc[0, "dominant_frequency_hz"] == pytest.approx(20.0)
+    assert "band_energy_target" in result.feature_frame.columns
+    assert result.records[0].processing_history[-1].operation == "filter"
 
 
-def test_phase_nine_notebook_exists_and_uses_package_apis() -> None:
-    """The main walkthrough notebook is present and calls package functions."""
-    notebook_path = Path("notebooks/01_signal_analysis_walkthrough.ipynb")
-
-    notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
-    source = "\n".join(
-        "".join(cell.get("source", []))
-        for cell in notebook["cells"]
+def test_configured_pipeline_skips_malformed_files_under_record_policy(tmp_path: Path) -> None:
+    pd.DataFrame({"time": [0.0, 0.1], "signal": ["bad", "values"]}).to_csv(
+        tmp_path / "bad.csv", index=False
+    )
+    pd.DataFrame({"time": [0.0, 0.1], "signal": [0.0, 1.0]}).to_csv(
+        tmp_path / "good.csv", index=False
+    )
+    config_path = tmp_path / "configured.yaml"
+    config_path.write_text(
+        f"""
+paths:
+  data_dir: "{tmp_path.as_posix()}"
+loading:
+  file_patterns: ["*.csv"]
+  signal_column: signal
+analysis:
+  invalid_record_policy: skip
+  modeling:
+    enabled: false
+""",
+        encoding="utf-8",
     )
 
-    assert notebook["nbformat"] == 4
-    assert 'config_path = Path("configs/synthetic.yaml")' in source
-    assert "from signal_processing_prep.pipeline import" in source
-    assert "make_synthetic_dataset()" in source
-    assert "AnalysisPipelineConfig.from_project_config(" in source
-    assert "analyze_records(" in source
-    assert "save_markdown_summary" in source
+    result = SignalAnalysisPipeline.from_config(config_path).run_dataset()
+
+    assert [record.provenance.source_name for record in result.records] == ["good"]
+    assert any("Loading skipped bad.csv" in note for note in result.processing_notes)
+
+
+def test_configured_pipeline_raises_when_all_loaded_files_are_invalid(tmp_path: Path) -> None:
+    pd.DataFrame({"time": [0.0, 0.1], "signal": ["bad", "values"]}).to_csv(
+        tmp_path / "bad.csv", index=False
+    )
+    config_path = tmp_path / "configured.yaml"
+    config_path.write_text(
+        f"""
+paths:
+  data_dir: "{tmp_path.as_posix()}"
+loading:
+  file_patterns: ["*.csv"]
+  signal_column: signal
+analysis:
+  invalid_record_policy: skip
+  modeling:
+    enabled: false
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RecordDataError, match="No valid records remained"):
+        SignalAnalysisPipeline.from_config(config_path).run_dataset()
+
+
+def test_pipeline_accepts_replaceable_typed_collaborators() -> None:
+    calls: list[str] = []
+
+    class FakeExtractor:
+        def extract_records(self, records):
+            calls.append(f"extract:{records[0].name}")
+            return FeatureTable.from_dataframe(
+                pd.DataFrame({"record_name": [records[0].name], "label": [None], "rms": [1.0]}),
+                feature_columns=("rms",),
+            )
+
+    class FakeQuality:
+        def assess(self, records):
+            calls.append(f"quality:{records[0].name}")
+            return QualityTable(pd.DataFrame({"record_name": [records[0].name], "issues": [""]}))
+
+    class FakePreprocessor:
+        def process(self, record):
+            calls.append(f"preprocess:{record.name}")
+            return record
+
+    class FakeScorer:
+        def score(self, features):
+            calls.append(f"score:{len(features)}")
+            return ModelEvaluation(
+                "fake",
+                "unsupervised_anomaly_score",
+                None,
+                ("rms",),
+                {"n_samples": 1.0},
+                PredictionTable.anomaly_scores(
+                    pd.DataFrame({"row_index": [0], "anomaly_score": [1.0], "anomaly_rank": [1]})
+                ),
+                "fake",
+            )
+
+    class FakeReports:
+        def build(self, **artifacts):
+            calls.append(f"report:{artifacts['record_count']}")
+            return AnalysisReport("Fake dataset")
+
+    result = SignalAnalysisPipeline(
+        AnalysisConfig(),
+        feature_extractor=FakeExtractor(),
+        anomaly_scorer=FakeScorer(),
+        report_builder=FakeReports(),
+        quality_assessor=FakeQuality(),
+        preprocessor=FakePreprocessor(),
+    ).run_records([sine_wave(name="demo")])
+
+    assert calls == ["quality:demo", "preprocess:demo", "extract:demo", "score:1", "report:1"]
+    assert "Fake dataset" in result.markdown_summary
+
+
+def test_pipeline_rejects_unaligned_scorer_predictions() -> None:
+    class WrongScorer:
+        def score(self, features):
+            return ModelEvaluation(
+                "wrong",
+                "unsupervised_anomaly_score",
+                None,
+                ("rms",),
+                {"n_samples": 1.0},
+                PredictionTable.anomaly_scores(
+                    pd.DataFrame(
+                        {
+                            "row_index": [0],
+                            "record_name": ["unrelated"],
+                            "anomaly_score": [1.0],
+                            "anomaly_rank": [1],
+                        }
+                    )
+                ),
+                "wrong",
+            )
+
+    with pytest.raises(ValueError, match="not aligned"):
+        SignalAnalysisPipeline(anomaly_scorer=WrongScorer()).run_records(
+            [sine_wave(label=None, name="source")]
+        )
+
+
+def test_empty_input_is_rejected() -> None:
+    with pytest.raises(ValueError, match="At least one SignalRecord"):
+        SignalAnalysisPipeline().run_records([])

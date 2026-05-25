@@ -31,7 +31,7 @@ def test_sine_wave_shape_sampling_rate_and_label() -> None:
     assert record.n_samples == 200
     assert record.sampling_rate_hz == 100.0
     assert record.label == "healthy"
-    assert record.metadata["frequency_hz"] == 10.0
+    assert record.attributes["frequency_hz"] == 10.0
     assert np.max(np.abs(record.values)) <= 1.0
 
 
@@ -68,8 +68,8 @@ def test_chirp_signal_records_frequency_range() -> None:
     )
 
     assert record.n_samples == 200
-    assert record.metadata["start_frequency_hz"] == 5.0
-    assert record.metadata["end_frequency_hz"] == 50.0
+    assert record.attributes["start_frequency_hz"] == 5.0
+    assert record.attributes["end_frequency_hz"] == 50.0
 
 
 def test_clipped_signal_respects_clip_limit() -> None:
@@ -113,12 +113,12 @@ def test_window_signal_generates_rectangular_and_smooth_windows() -> None:
     )
 
     assert rectangular.n_samples == 100
-    assert rectangular.metadata["window_type"] == "rectangular"
-    assert rectangular.metadata["window_start_seconds"] == 0.0
-    assert rectangular.metadata["window_duration_seconds"] == 1.0
+    assert rectangular.attributes["window_type"] == "rectangular"
+    assert rectangular.attributes["active_window_start_seconds"] == 0.0
+    assert rectangular.attributes["active_window_duration_seconds"] == 1.0
     assert np.all(rectangular.values == 2.0)
     assert hann.n_samples == 100
-    assert hann.metadata["window_type"] == "hann"
+    assert hann.attributes["window_type"] == "hann"
     assert hann.values[0] == pytest.approx(0.0)
     assert hann.values[-1] == pytest.approx(0.0)
     assert np.max(hann.values) == pytest.approx(1.0, rel=1e-3)
@@ -138,8 +138,8 @@ def test_window_signal_can_be_embedded_in_longer_record() -> None:
     assert record.n_samples == 200
     assert np.all(record.values[~active] == 0.0)
     assert np.all(record.values[active] == 1.0)
-    assert record.metadata["window_start_seconds"] == 0.5
-    assert record.metadata["window_duration_seconds"] == 0.25
+    assert record.attributes["active_window_start_seconds"] == 0.5
+    assert record.attributes["active_window_duration_seconds"] == 0.25
 
 
 def test_window_signal_rejects_invalid_arguments() -> None:
@@ -174,8 +174,8 @@ def test_sinc_signal_is_centered_and_records_bandwidth() -> None:
     assert record.n_samples == 100
     assert record.time_seconds[peak_index] == pytest.approx(0.5)
     assert record.values[peak_index] == pytest.approx(3.0, rel=1e-3)
-    assert record.metadata["bandwidth_hz"] == 8.0
-    assert record.metadata["center_seconds"] == 0.5
+    assert record.attributes["bandwidth_hz"] == 8.0
+    assert record.attributes["center_seconds"] == 0.5
 
 
 def test_sinc_signal_rejects_invalid_arguments() -> None:
@@ -225,8 +225,8 @@ def test_add_signals_combines_same_length_records() -> None:
     assert combined.sampling_rate_hz == 100.0
     assert combined.label == "mixed"
     assert combined.name == "two_tone"
-    assert combined.metadata["operation"] == "add"
-    assert combined.metadata["source_names"] == ["low", "high"]
+    assert combined.attributes["operation"] == "add"
+    assert combined.attributes["source_names"] == ("low", "high")
 
 
 def test_multiply_signals_combines_same_length_records() -> None:
@@ -246,7 +246,7 @@ def test_multiply_signals_combines_same_length_records() -> None:
     product = multiply_signals([carrier, envelope])
 
     np.testing.assert_allclose(product.values, carrier.values * envelope.values)
-    assert product.metadata["operation"] == "multiply"
+    assert product.attributes["operation"] == "multiply"
 
 
 def test_convolve_signals_uses_requested_mode() -> None:
@@ -268,8 +268,8 @@ def test_convolve_signals_uses_requested_mode() -> None:
     np.testing.assert_allclose(convolved.values, expected)
     assert convolved.sampling_rate_hz == first.sampling_rate_hz
     assert convolved.n_samples == first.n_samples + kernel.n_samples - 1
-    assert convolved.metadata["operation"] == "convolve"
-    assert convolved.metadata["mode"] == "full"
+    assert convolved.attributes["operation"] == "convolve"
+    assert convolved.attributes["mode"] == "full"
 
 
 def test_signal_composition_rejects_incompatible_records() -> None:

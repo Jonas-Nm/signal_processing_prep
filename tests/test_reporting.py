@@ -1,55 +1,43 @@
-"""Tests for Markdown reporting helpers."""
+"""Tests for report objects and artifact-driven report building."""
 
 import pandas as pd
 
-from signal_processing_prep.reporting import (
-    MarkdownReport,
-    dataset_overview_from_records,
-    generate_markdown_summary,
-    save_markdown_summary,
-)
+from signal_processing_prep.artifacts import FeatureTable, QualityTable
+from signal_processing_prep.reporting import AnalysisReport, AnalysisReportBuilder, dataset_overview
 
 
-def test_generate_markdown_summary_includes_standard_sections() -> None:
-    """Generated summaries follow the roadmap report structure."""
-    markdown = generate_markdown_summary(
-        MarkdownReport(
-            dataset_overview="Two synthetic records.",
-            figures={"FFT": "reports/figures/2026-05-19/fft.png"},
-        )
+def test_analysis_report_renders_and_saves_standard_sections(tmp_path) -> None:
+    report = AnalysisReport(
+        dataset_overview="Two synthetic records.",
+        figures={"FFT": "reports/figures/fft.png"},
     )
+    markdown = report.render_markdown()
+    path = report.save(tmp_path, stem="Demo Report", run_date="2026-05-19")
 
     assert "# Signal Analysis Summary" in markdown
-    assert "## Dataset overview" in markdown
     assert "## Signal quality observations" in markdown
-    assert "## Feature/model findings" in markdown
     assert "FFT" in markdown
-
-
-def test_save_markdown_summary_writes_file(tmp_path) -> None:
-    """Markdown summaries are saved to reports/summaries-style paths."""
-    path = save_markdown_summary(
-        "# Demo\n",
-        tmp_path,
-        stem="Demo Report",
-        run_date="2026-05-19",
-    )
-
-    assert path.exists()
     assert path.name == "2026-05-19_Demo_Report.md"
-    assert path.read_text(encoding="utf-8") == "# Demo\n"
+    assert path.read_text(encoding="utf-8") == markdown
 
 
-def test_dataset_overview_from_records_is_factual() -> None:
-    """Dataset overview text reports counts without interpretation."""
-    features = pd.DataFrame({"rms": [1.0, 2.0], "label": ["a", "b"]})
+def test_dataset_overview_and_builder_consume_artifacts() -> None:
+    features = FeatureTable.from_dataframe(
+        pd.DataFrame({"record_name": ["a", "b"], "label": ["x", "y"], "rms": [1.0, 2.0]}),
+        feature_columns=("rms",),
+    )
+    quality = QualityTable(pd.DataFrame({"record_name": ["a", "b"], "issues": ["", ""]}))
 
-    overview = dataset_overview_from_records(
-        2,
+    text = dataset_overview(2, features)
+    report = AnalysisReportBuilder().build(
+        record_count=2,
+        quality=quality,
         features=features,
-        labels=features["label"],
+        supervised_models={},
+        anomaly_model=None,
+        modeling_notes=[],
+        processing_notes=[],
     )
 
-    assert "2 signal record" in overview
-    assert "2 row" in overview
-    assert "Observed label counts" in overview
+    assert "Observed label counts" in text
+    assert "RMS ranged" in report.render_markdown()

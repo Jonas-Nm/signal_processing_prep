@@ -1,155 +1,21 @@
-"""Signal-processing analysis toolkit for exploratory time-series tasks."""
+"""Primary public workflow and domain API for signal-processing analyses."""
 
-from signal_processing_prep.autoencoders import (
-    SpectrogramAutoencoderConfig,
-    SpectrogramAutoencoderDemoDataset,
-    SpectrogramAutoencoderResult,
-    SpectrogramPatchSet,
-    run_spectrogram_autoencoder,
-    split_autoencoder_demo_records,
-    spectrogram_patches_from_records,
-)
-from signal_processing_prep.config import ProjectConfig, load_config
-from signal_processing_prep.data_loading import (
-    load_signal_dataset,
-    load_signal_file,
-    load_signal_file_channels,
-)
-from signal_processing_prep.features import (
-    FeatureExtractionConfig,
-    FrequencyBand,
-    SlidingWindowConfig,
-    extract_features,
-    frequency_bands_from_mapping,
-    sliding_window_features,
-)
-from signal_processing_prep.modeling import (
-    ModelEvaluation,
-    anomaly_summary_text,
-    run_dbscan_outlier_scores,
-    run_isolation_forest,
-    run_local_outlier_factor,
-    run_mahalanobis_distance,
-    run_one_class_svm,
-    run_pca_reconstruction,
-    run_robust_mahalanobis_distance,
-    run_robust_z_score,
-    run_supervised_baselines,
-    top_anomalies,
-)
-from signal_processing_prep.plotting import (
-    plot_anomaly_scores,
-    plot_confusion_matrix,
-    plot_feature_distribution,
-    plot_feature_importance,
-    plot_frequency_spectra,
-    plot_frequency_spectrum,
-    plot_spectrogram,
-    plot_spectrogram_dynamic_range,
-    plot_time_signal_adaptive,
-    plot_time_signal,
-    plot_time_signal_navigator,
-    plot_wavelet_scalogram,
-    save_figure,
-)
-from signal_processing_prep.pipeline import (
-    AnalysisPipelineConfig,
-    AnalysisPipelineResult,
-    analyze_dataset,
-    analyze_records,
-    run_synthetic_analysis,
-)
-from signal_processing_prep.preprocessing import (
-    FilterSpec,
-    apply_configured_filter,
-    apply_filter,
-    apply_window,
-    interpolate_missing_values,
-    segment_dataset,
-    segment_signal,
-)
-from signal_processing_prep.quality import (
-    QualityCheckConfig,
-    QualityReport,
-    assess_dataset_quality,
-    assess_signal_quality,
-)
-from signal_processing_prep.reporting import (
-    MarkdownReport,
-    dataset_overview_from_records,
-    generate_markdown_summary,
-    save_markdown_summary,
-)
-from signal_processing_prep.records import AcquisitionDiagnostics, SignalProvenance, SignalRecord
+from signal_processing_prep.config import AnalysisConfig, ProjectConfig, load_config
+from signal_processing_prep.data_loading import SignalDatasetLoader
+from signal_processing_prep.pipeline import AnalysisResult, SignalAnalysisPipeline, run_synthetic_analysis
+from signal_processing_prep.records import SignalDataset, SignalRecord
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
-    "FeatureExtractionConfig",
-    "FilterSpec",
-    "FrequencyBand",
-    "SlidingWindowConfig",
-    "AnalysisPipelineConfig",
-    "AnalysisPipelineResult",
-    "AcquisitionDiagnostics",
-    "MarkdownReport",
-    "ModelEvaluation",
+    "AnalysisConfig",
+    "AnalysisResult",
     "ProjectConfig",
-    "QualityCheckConfig",
-    "QualityReport",
+    "SignalAnalysisPipeline",
+    "SignalDataset",
+    "SignalDatasetLoader",
     "SignalRecord",
-    "SignalProvenance",
-    "SpectrogramAutoencoderConfig",
-    "SpectrogramAutoencoderDemoDataset",
-    "SpectrogramAutoencoderResult",
-    "SpectrogramPatchSet",
     "__version__",
-    "apply_configured_filter",
-    "apply_filter",
-    "apply_window",
-    "analyze_records",
-    "analyze_dataset",
-    "anomaly_summary_text",
-    "assess_dataset_quality",
-    "assess_signal_quality",
-    "extract_features",
-    "sliding_window_features",
-    "frequency_bands_from_mapping",
-    "dataset_overview_from_records",
-    "generate_markdown_summary",
-    "interpolate_missing_values",
-    "load_signal_dataset",
     "load_config",
-    "load_signal_file",
-    "load_signal_file_channels",
-    "plot_confusion_matrix",
-    "plot_anomaly_scores",
-    "plot_feature_distribution",
-    "plot_feature_importance",
-    "plot_frequency_spectra",
-    "plot_frequency_spectrum",
-    "plot_spectrogram",
-    "plot_spectrogram_dynamic_range",
-    "plot_time_signal_adaptive",
-    "plot_time_signal",
-    "plot_time_signal_navigator",
-    "plot_wavelet_scalogram",
-    "run_dbscan_outlier_scores",
-    "run_isolation_forest",
-    "run_local_outlier_factor",
-    "run_mahalanobis_distance",
-    "run_one_class_svm",
-    "run_pca_reconstruction",
-    "run_robust_mahalanobis_distance",
-    "run_robust_z_score",
-    "run_spectrogram_autoencoder",
-    "run_supervised_baselines",
     "run_synthetic_analysis",
-    "save_figure",
-    "save_markdown_summary",
-    "segment_dataset",
-    "segment_signal",
-    "split_autoencoder_demo_records",
-    "spectrogram_patches_from_records",
-    "top_anomalies",
 ]

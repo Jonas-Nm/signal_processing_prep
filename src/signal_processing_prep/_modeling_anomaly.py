@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 from sklearn.cluster import DBSCAN
 from sklearn.covariance import MinCovDet
 from sklearn.decomposition import PCA
@@ -14,17 +13,16 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
 
 from signal_processing_prep._modeling_common import (
-    ANOMALY_METADATA_COLUMNS,
     ModelEvaluation,
-    anomaly_prediction_frame,
-    attach_available_metadata,
+    anomaly_prediction_table,
     numeric_feature_matrix,
     standardized_anomaly_matrix,
 )
+from signal_processing_prep.artifacts import FeatureTable
 
 
 def run_isolation_forest(
-    features: pd.DataFrame,
+    features: FeatureTable,
     *,
     contamination: float | str = "auto",
     random_state: int = 0,
@@ -33,22 +31,15 @@ def run_isolation_forest(
     x, feature_columns = numeric_feature_matrix(features)
     if x.empty:
         raise ValueError("At least one numeric feature column is required.")
-    source_rows = features.reset_index(drop=True).loc[x.attrs["source_positions"]]
+    source_rows = features.to_dataframe().reset_index(drop=True).loc[x.attrs["source_positions"]]
     estimator = IsolationForest(contamination=contamination, random_state=random_state)
     predictions = estimator.fit_predict(x)
     anomaly_score = -estimator.decision_function(x)
-    prediction_frame = pd.DataFrame(
-        {
-            "row_index": x.index,
-            "anomaly_score": anomaly_score,
-            "isolation_forest_prediction": predictions,
-        }
-    )
-    prediction_frame["anomaly_rank"] = (
-        prediction_frame["anomaly_score"].rank(method="first", ascending=False).astype(int)
-    )
-    prediction_frame = attach_available_metadata(
-        prediction_frame, source_rows, ANOMALY_METADATA_COLUMNS
+    prediction_table = anomaly_prediction_table(
+        x,
+        source_rows,
+        anomaly_score,
+        {"isolation_forest_prediction": predictions},
     )
     return ModelEvaluation(
         model_name="isolation_forest",
@@ -60,13 +51,13 @@ def run_isolation_forest(
             "contamination": str(contamination),
             "anomaly_fraction": float(np.mean(predictions == -1)),
         },
-        predictions=prediction_frame,
+        predictions=prediction_table,
         split_strategy="fit on all rows; anomaly scores are exploratory",
     )
 
 
 def run_one_class_svm(
-    features: pd.DataFrame,
+    features: FeatureTable,
     *,
     kernel: str = "rbf",
     gamma: str | float = "scale",
@@ -81,7 +72,7 @@ def run_one_class_svm(
     )
     predictions = estimator.fit_predict(x)
     anomaly_score = -estimator.decision_function(x)
-    prediction_frame = anomaly_prediction_frame(
+    prediction_table = anomaly_prediction_table(
         x, source_rows, anomaly_score, {"one_class_svm_prediction": predictions}
     )
     return ModelEvaluation(
@@ -94,13 +85,13 @@ def run_one_class_svm(
             "nu": float(nu),
             "anomaly_fraction": float(np.mean(predictions == -1)),
         },
-        predictions=prediction_frame,
+        predictions=prediction_table,
         split_strategy="fit on all rows; anomaly scores are exploratory",
     )
 
 
 def run_local_outlier_factor(
-    features: pd.DataFrame,
+    features: FeatureTable,
     *,
     n_neighbors: int = 20,
     contamination: float | str = "auto",
@@ -122,7 +113,7 @@ def run_local_outlier_factor(
     predictions = estimator.fit_predict(x)
     model = estimator.named_steps["model"]
     anomaly_score = -model.negative_outlier_factor_
-    prediction_frame = anomaly_prediction_frame(
+    prediction_table = anomaly_prediction_table(
         x, source_rows, anomaly_score, {"local_outlier_factor_prediction": predictions}
     )
     return ModelEvaluation(
@@ -136,13 +127,13 @@ def run_local_outlier_factor(
             "contamination": str(contamination),
             "anomaly_fraction": float(np.mean(predictions == -1)),
         },
-        predictions=prediction_frame,
+        predictions=prediction_table,
         split_strategy="fit on all rows; anomaly scores are exploratory",
     )
 
 
 def run_pca_reconstruction(
-    features: pd.DataFrame,
+    features: FeatureTable,
     *,
     n_components: int | float = 0.95,
 ) -> ModelEvaluation:
@@ -168,13 +159,13 @@ def run_pca_reconstruction(
             "n_components": float(pca.n_components_),
             "explained_variance_ratio_sum": float(np.sum(pca.explained_variance_ratio_)),
         },
-        predictions=anomaly_prediction_frame(x, source_rows, anomaly_score),
+        predictions=anomaly_prediction_table(x, source_rows, anomaly_score),
         split_strategy="fit on all rows; reconstruction errors are exploratory",
     )
 
 
 def run_dbscan_outlier_scores(
-    features: pd.DataFrame,
+    features: FeatureTable,
     *,
     eps: float = 1.5,
     min_samples: int = 5,
@@ -203,7 +194,7 @@ def run_dbscan_outlier_scores(
             "noise_fraction": float(np.mean(labels == -1)),
             "n_clusters": float(len(set(labels) - {-1})),
         },
-        predictions=anomaly_prediction_frame(
+        predictions=anomaly_prediction_table(
             x, source_rows, anomaly_score, {"dbscan_label": labels}
         ),
         split_strategy="fit on all rows; DBSCAN scores are exploratory and eps-sensitive",
@@ -211,7 +202,7 @@ def run_dbscan_outlier_scores(
 
 
 def run_robust_z_score(
-    features: pd.DataFrame,
+    features: FeatureTable,
     *,
     feature_columns: tuple[str, ...] | list[str] | None = None,
 ) -> ModelEvaluation:
@@ -230,13 +221,13 @@ def run_robust_z_score(
         estimator=None,
         feature_columns=selected_columns,
         metrics={"n_samples": float(len(x))},
-        predictions=anomaly_prediction_frame(x, source_rows, anomaly_score),
+        predictions=anomaly_prediction_table(x, source_rows, anomaly_score),
         split_strategy="fit on all rows; robust positive z-scores are exploratory",
     )
 
 
 def run_mahalanobis_distance(
-    features: pd.DataFrame,
+    features: FeatureTable,
     *,
     feature_columns: tuple[str, ...] | list[str] | None = None,
 ) -> ModelEvaluation:
@@ -256,13 +247,13 @@ def run_mahalanobis_distance(
         estimator={"centroid": centroid, "inverse_covariance": inverse_covariance},
         feature_columns=selected_columns,
         metrics={"n_samples": float(len(x))},
-        predictions=anomaly_prediction_frame(x, source_rows, anomaly_score),
+        predictions=anomaly_prediction_table(x, source_rows, anomaly_score),
         split_strategy="fit on all rows; Mahalanobis distances are exploratory",
     )
 
 
 def run_robust_mahalanobis_distance(
-    features: pd.DataFrame,
+    features: FeatureTable,
     *,
     feature_columns: tuple[str, ...] | list[str] | None = None,
     support_fraction: float | None = None,
@@ -308,7 +299,7 @@ def run_robust_mahalanobis_distance(
             "support_fraction": "auto" if support_fraction is None else float(support_fraction),
             "support_count": float(np.sum(estimator.support_)),
         },
-        predictions=anomaly_prediction_frame(x, source_rows, anomaly_score),
+        predictions=anomaly_prediction_table(x, source_rows, anomaly_score),
         split_strategy="fit on all rows; robust Mahalanobis distances are exploratory",
     )
 

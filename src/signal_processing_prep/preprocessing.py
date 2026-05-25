@@ -9,7 +9,8 @@ import numpy as np
 from scipy import signal as scipy_signal
 
 from signal_processing_prep.config import FilteringConfig
-from signal_processing_prep.records import SignalProvenance, SignalRecord
+from signal_processing_prep.errors import ConfigurationError, RecordDataError
+from signal_processing_prep.records import ProcessingStep, SignalRecord
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,18 @@ class FilterSpec:
     order: int = 4
     zero_phase: bool = True
     allow_causal_fallback: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate static filter fields when a specialist constructs a filter."""
+        FilteringConfig(
+            enabled=True,
+            kind=self.kind,
+            low_cut_hz=self.low_cut_hz,
+            high_cut_hz=self.high_cut_hz,
+            order=self.order,
+            zero_phase=self.zero_phase,
+            allow_causal_fallback=self.allow_causal_fallback,
+        )
 
 
 def apply_filter(record: SignalRecord, spec: FilterSpec) -> SignalRecord:
@@ -47,7 +60,7 @@ def apply_filter(record: SignalRecord, spec: FilterSpec) -> SignalRecord:
             phase_mode = "zero_phase"
         except ValueError as error:
             if not spec.allow_causal_fallback:
-                raise ValueError(
+                raise RecordDataError(
                     "Record is too short for zero-phase filtering. Set "
                     "zero_phase=False or allow_causal_fallback=True to use causal filtering."
                 ) from error
@@ -57,25 +70,17 @@ def apply_filter(record: SignalRecord, spec: FilterSpec) -> SignalRecord:
         filtered_values = scipy_signal.sosfilt(sos, record.values)
         phase_mode = "causal"
 
-    return SignalRecord(
-        values=np.asarray(filtered_values, dtype=np.float64),
-        sampling_rate_hz=record.sampling_rate_hz,
-        label=record.label,
-        name=record.name,
-        metadata={
-            **record.metadata,
-            "preprocessing": {
-                **_preprocessing_metadata(record),
-                "filter_kind": kind,
-                "low_cut_hz": spec.low_cut_hz,
-                "high_cut_hz": spec.high_cut_hz,
-                "order": spec.order,
-                "phase_mode": phase_mode,
-                "allow_causal_fallback": spec.allow_causal_fallback,
-            },
-        },
-        provenance=record.provenance,
-        acquisition=record.acquisition,
+    parameters = {
+        "filter_kind": kind,
+        "low_cut_hz": spec.low_cut_hz,
+        "high_cut_hz": spec.high_cut_hz,
+        "order": spec.order,
+        "phase_mode": phase_mode,
+        "allow_causal_fallback": spec.allow_causal_fallback,
+    }
+    return record.with_values(
+        np.asarray(filtered_values, dtype=np.float64),
+        processing_step=ProcessingStep("filter", parameters),
     )
 
 
@@ -95,6 +100,8 @@ def apply_configured_filter(
             low_cut_hz=config.low_cut_hz,
             high_cut_hz=config.high_cut_hz,
             order=config.order,
+            zero_phase=config.zero_phase,
+            allow_causal_fallback=config.allow_causal_fallback,
         ),
     )
 
@@ -112,9 +119,9 @@ def interpolate_missing_values(
     rather than silently filled.
     """
     if method != "linear":
-        raise ValueError("Only linear interpolation is currently supported.")
+        raise ConfigurationError("Only linear interpolation is currently supported.")
     if not 0.0 <= max_missing_fraction <= 1.0:
-        raise ValueError("max_missing_fraction must be between 0 and 1.")
+        raise ConfigurationError("max_missing_fraction must be between 0 and 1.")
 
     values = record.values
     finite_mask = np.isfinite(values)
@@ -123,12 +130,12 @@ def interpolate_missing_values(
     if missing_count == 0:
         return record
     if missing_fraction > max_missing_fraction:
-        raise ValueError(
+        raise RecordDataError(
             "Missing fraction exceeds max_missing_fraction; skip, segment, or "
             "choose a more explicit repair strategy."
         )
     if not np.any(finite_mask):
-        raise ValueError("Cannot interpolate a record with no finite samples.")
+        raise RecordDataError("Cannot interpolate a record with no finite samples.")
 
     sample_indices = np.arange(values.size, dtype=np.float64)
     interpolated_values = np.interp(
@@ -137,25 +144,15 @@ def interpolate_missing_values(
         values[finite_mask],
     )
 
-    return SignalRecord(
-        values=np.asarray(interpolated_values, dtype=np.float64),
-        sampling_rate_hz=record.sampling_rate_hz,
-        label=record.label,
-        name=record.name,
-        metadata={
-            **record.metadata,
-            "preprocessing": {
-                **_preprocessing_metadata(record),
-                "missing_value_interpolation": {
-                    "method": method,
-                    "missing_count": missing_count,
-                    "missing_fraction": missing_fraction,
-                    "max_missing_fraction": max_missing_fraction,
-                },
-            },
-        },
-        provenance=record.provenance,
-        acquisition=record.acquisition,
+    parameters: dict[str, object] = {
+        "method": method,
+        "missing_count": missing_count,
+        "missing_fraction": missing_fraction,
+        "max_missing_fraction": max_missing_fraction,
+    }
+    return record.with_values(
+        np.asarray(interpolated_values, dtype=np.float64),
+        processing_step=ProcessingStep("missing_value_interpolation", parameters),
     )
 
 
@@ -172,25 +169,13 @@ def apply_window(
         if mean_square > 0.0:
             weights = weights / np.sqrt(mean_square)
     windowed_values = record.values * weights
-    window_metadata = {
+    window_parameters = {
         "name": _window_name(window),
         "normalize_power": normalize_power,
     }
-    return SignalRecord(
-        values=windowed_values,
-        sampling_rate_hz=record.sampling_rate_hz,
-        label=record.label,
-        name=record.name,
-        metadata={
-            **record.metadata,
-            "preprocessing": {
-                **_preprocessing_metadata(record),
-                "window": window_metadata,
-            },
-            "window": window_metadata,
-        },
-        provenance=record.provenance,
-        acquisition=record.acquisition,
+    return record.with_values(
+        windowed_values,
+        processing_step=ProcessingStep("window", window_parameters),
     )
 
 
@@ -215,9 +200,9 @@ def segment_signal(
         field_name="step_seconds",
     )
     if step_seconds > window_seconds:
-        raise ValueError("step_seconds must not exceed window_seconds.")
+        raise ConfigurationError("step_seconds must not exceed window_seconds.")
     if window_samples > record.n_samples and not include_partial:
-        raise ValueError("window_seconds must not exceed the record duration.")
+        raise RecordDataError("window_seconds must not exceed the record duration.")
 
     windows: list[SignalRecord] = []
     for start in range(0, record.n_samples, step_samples):
@@ -228,7 +213,7 @@ def segment_signal(
             end = record.n_samples
         if end <= start:
             break
-        windows.append(_window_record(record, start, end, len(windows)))
+        windows.append(record.segment(start, end, len(windows)))
         if end == record.n_samples:
             break
     return windows
@@ -258,72 +243,45 @@ def segment_dataset(
 def _validate_filter_spec(spec: FilterSpec, sampling_rate_hz: float) -> None:
     kind = spec.kind.lower()
     if kind not in {"lowpass", "highpass", "bandpass"}:
-        raise ValueError("Filter kind must be 'lowpass', 'highpass', or 'bandpass'.")
+        raise ConfigurationError("Filter kind must be 'lowpass', 'highpass', or 'bandpass'.")
     if spec.order <= 0:
-        raise ValueError("Filter order must be positive.")
+        raise ConfigurationError("Filter order must be positive.")
     nyquist_hz = sampling_rate_hz / 2.0
     if kind in {"highpass", "bandpass"}:
         _validate_cutoff(spec.low_cut_hz, nyquist_hz, "low_cut_hz")
     if kind in {"lowpass", "bandpass"}:
         _validate_cutoff(spec.high_cut_hz, nyquist_hz, "high_cut_hz")
     if kind == "bandpass" and spec.low_cut_hz >= spec.high_cut_hz:  # type: ignore[operator]
-        raise ValueError("low_cut_hz must be less than high_cut_hz for bandpass filters.")
+        raise ConfigurationError("low_cut_hz must be less than high_cut_hz for bandpass filters.")
 
 
 def _validate_cutoff(cutoff_hz: float | None, nyquist_hz: float, name: str) -> None:
     if cutoff_hz is None:
-        raise ValueError(f"{name} is required for this filter kind.")
+        raise ConfigurationError(f"{name} is required for this filter kind.")
     if cutoff_hz <= 0:
-        raise ValueError(f"{name} must be positive.")
+        raise ConfigurationError(f"{name} must be positive.")
     if cutoff_hz >= nyquist_hz:
-        raise ValueError(f"{name} must be below the Nyquist frequency.")
-
-
-def _preprocessing_metadata(record: SignalRecord) -> dict[str, object]:
-    metadata = record.metadata.get("preprocessing")
-    return dict(metadata) if isinstance(metadata, dict) else {}
+        raise RecordDataError(f"{name} must be below the Nyquist frequency.")
 
 
 def _seconds_to_samples(seconds: float, sampling_rate_hz: float, *, field_name: str) -> int:
     if seconds <= 0:
-        raise ValueError(f"{field_name} must be positive.")
+        raise ConfigurationError(f"{field_name} must be positive.")
     return max(1, int(round(seconds * sampling_rate_hz)))
-
-
-def _window_record(
-    record: SignalRecord,
-    start_index: int,
-    end_index: int,
-    window_index: int,
-) -> SignalRecord:
-    start_seconds = start_index / record.sampling_rate_hz
-    end_seconds = end_index / record.sampling_rate_hz
-    base_name = record.name or "record"
-    return SignalRecord(
-        values=record.values[start_index:end_index].copy(),
-        sampling_rate_hz=record.sampling_rate_hz,
-        label=record.label,
-        name=f"{base_name}_window_{window_index}",
-        metadata={
-            **record.metadata,
-            "source_name": record.name,
-            "window_index": window_index,
-            "window_start_seconds": start_seconds,
-            "window_end_seconds": end_seconds,
-            "window_start_sample": start_index,
-            "window_end_sample": end_index,
-        },
-        provenance=SignalProvenance(
-            source_name=record.provenance.source_name or record.name,
-            source_path=record.provenance.source_path,
-            channel_name=record.provenance.channel_name,
-            channel_index=record.provenance.channel_index,
-        ),
-        acquisition=record.acquisition,
-    )
 
 
 def _window_name(window: str | tuple[str, float]) -> str:
     if isinstance(window, tuple):
         return str(window[0])
     return window
+
+
+@dataclass(frozen=True)
+class SignalPreprocessor:
+    """Configured pipeline collaborator applying explicit preprocessing steps."""
+
+    filtering: FilteringConfig = FilteringConfig()
+
+    def process(self, record: SignalRecord) -> SignalRecord:
+        """Apply configured preprocessing to one record."""
+        return apply_configured_filter(record, self.filtering)
