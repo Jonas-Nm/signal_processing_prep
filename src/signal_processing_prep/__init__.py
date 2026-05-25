@@ -1,5 +1,14 @@
 """Signal-processing analysis toolkit for exploratory time-series tasks."""
 
+from signal_processing_prep.autoencoders import (
+    SpectrogramAutoencoderConfig,
+    SpectrogramAutoencoderDemoDataset,
+    SpectrogramAutoencoderResult,
+    SpectrogramPatchSet,
+    run_spectrogram_autoencoder,
+    split_autoencoder_demo_records,
+    spectrogram_patches_from_records,
+)
 from signal_processing_prep.config import ProjectConfig, load_config
 from signal_processing_prep.data_loading import (
     load_signal_dataset,
@@ -17,7 +26,14 @@ from signal_processing_prep.features import (
 from signal_processing_prep.modeling import (
     ModelEvaluation,
     anomaly_summary_text,
+    run_dbscan_outlier_scores,
     run_isolation_forest,
+    run_local_outlier_factor,
+    run_mahalanobis_distance,
+    run_one_class_svm,
+    run_pca_reconstruction,
+    run_robust_mahalanobis_distance,
+    run_robust_z_score,
     run_supervised_baselines,
     top_anomalies,
 )
@@ -80,6 +96,10 @@ __all__ = [
     "QualityCheckConfig",
     "QualityReport",
     "SignalRecord",
+    "SpectrogramAutoencoderConfig",
+    "SpectrogramAutoencoderDemoDataset",
+    "SpectrogramAutoencoderResult",
+    "SpectrogramPatchSet",
     "__version__",
     "apply_configured_filter",
     "apply_filter",
@@ -110,12 +130,22 @@ __all__ = [
     "plot_time_signal",
     "plot_time_signal_navigator",
     "plot_wavelet_scalogram",
+    "run_dbscan_outlier_scores",
     "run_isolation_forest",
+    "run_local_outlier_factor",
+    "run_mahalanobis_distance",
+    "run_one_class_svm",
+    "run_pca_reconstruction",
+    "run_robust_mahalanobis_distance",
+    "run_robust_z_score",
+    "run_spectrogram_autoencoder",
     "run_supervised_baselines",
     "run_synthetic_analysis",
     "save_figure",
     "save_markdown_summary",
     "segment_dataset",
     "segment_signal",
+    "split_autoencoder_demo_records",
+    "spectrogram_patches_from_records",
     "top_anomalies",
 ]

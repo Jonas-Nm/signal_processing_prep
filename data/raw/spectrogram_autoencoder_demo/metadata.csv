@@ -1,0 +1,15 @@
+file_name,source_path,split,label,is_anomalous,anomaly_kind,anomaly_start_seconds,anomaly_end_seconds,sampling_rate_hz,duration_seconds,seed
+normal_train_00.csv,records/normal_train_00.csv,train,normal,False,,,,2000.0,4.0,208768
+normal_train_01.csv,records/normal_train_01.csv,train,normal,False,,,,2000.0,4.0,671001
+normal_train_02.csv,records/normal_train_02.csv,train,normal,False,,,,2000.0,4.0,133283
+normal_train_03.csv,records/normal_train_03.csv,train,normal,False,,,,2000.0,4.0,226154
+normal_train_04.csv,records/normal_train_04.csv,train,normal,False,,,,2000.0,4.0,757592
+normal_train_05.csv,records/normal_train_05.csv,train,normal,False,,,,2000.0,4.0,943575
+normal_train_06.csv,records/normal_train_06.csv,train,normal,False,,,,2000.0,4.0,356507
+normal_train_07.csv,records/normal_train_07.csv,train,normal,False,,,,2000.0,4.0,601425
+normal_test_00.csv,records/normal_test_00.csv,test,normal,False,,,,2000.0,4.0,285125
+normal_test_01.csv,records/normal_test_01.csv,test,normal,False,,,,2000.0,4.0,162237
+normal_test_02.csv,records/normal_test_02.csv,test,normal,False,,,,2000.0,4.0,787288
+anomalous_test_00.csv,records/anomalous_test_00.csv,test,anomalous,True,transient_tone,3.0831288530771634,3.323128853077163,2000.0,4.0,131419
+anomalous_test_01.csv,records/anomalous_test_01.csv,test,anomalous,True,broadband_impulse,1.7391371525798638,1.859137152579864,2000.0,4.0,421215
+anomalous_test_02.csv,records/anomalous_test_02.csv,test,anomalous,True,transient_tone,3.323499645139446,3.563499645139446,2000.0,4.0,499657

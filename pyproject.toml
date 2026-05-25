@@ -27,6 +27,9 @@ notebook = [
     "ipykernel",
     "ipympl",
 ]
+deep-learning = [
+    "torch",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

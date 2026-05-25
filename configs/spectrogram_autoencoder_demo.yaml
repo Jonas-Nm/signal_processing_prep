@@ -1,0 +1,36 @@
+# Synthetic spectrogram autoencoder demo dataset.
+
+paths:
+  data_dir: data/raw/spectrogram_autoencoder_demo/records
+  reports_dir: reports
+  figures_dir: reports/figures
+  summaries_dir: reports/summaries
+
+loading:
+  file_patterns:
+    - "*.csv"
+  sampling_rate_hz: null
+  label_column: null
+  signal_column: voltage
+
+analysis:
+  frequency_bands_hz:
+    rotating:
+      - 30
+      - 180
+    harmonic:
+      - 180
+      - 350
+    anomaly_band:
+      - 350
+      - 800
+  window:
+    size_seconds: 0.5
+    overlap_fraction: 0.8
+
+filtering:
+  enabled: false
+  kind: null
+  low_cut_hz: null
+  high_cut_hz: null
+  order: 4
