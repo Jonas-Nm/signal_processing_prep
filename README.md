@@ -90,7 +90,8 @@ print(records[0])
 
 If CSV files contain a time-like column such as `time`, `timestamp`, or
 `time_seconds`, the loader infers the sampling rate and stores timing jitter,
-gap counts, and sampling-rate mismatch indicators in record metadata.
+gap counts, and sampling-rate mismatch indicators in `record.acquisition`.
+Legacy metadata keys remain available for compatibility.
 
 For timestamped files with noticeable jitter or gaps, treat the inferred
 sampling rate as an acquisition assumption to review before FFT, PSD, or
@@ -113,7 +114,7 @@ print(quality[[
     "sampling_rate_hz",
     "duration_seconds",
     "missing_fraction",
-    "has_clipping",
+    "is_clipped",
     "has_time_axis_irregularity",
     "has_sampling_rate_mismatch",
     "issues",
@@ -164,14 +165,18 @@ plot_spectrogram(record, window_seconds=0.1, step_seconds=0.05)
 
 ### 5. Run The Analysis Pipeline
 
-For a compact first report, run the high-level pipeline on the loaded records.
+For a compact first report driven by YAML settings, run the configured workflow.
+This maps configured frequency bands and filtering into the analysis pipeline.
 
 ```python
-from signal_processing_prep import AnalysisPipelineConfig, analyze_records
+from signal_processing_prep import AnalysisPipelineConfig, analyze_dataset, load_config
 
-result = analyze_records(
-    records,
-    AnalysisPipelineConfig(
+project_config = load_config("configs/default.yaml")
+result = analyze_dataset(
+    project_config,
+    metadata_table="data/raw/metadata.csv",  # optional
+    pipeline_config=AnalysisPipelineConfig.from_project_config(
+        project_config,
         run_modeling=True,
         run_anomaly_when_unlabeled=True,
         invalid_record_policy="skip",
@@ -187,6 +192,10 @@ The pipeline keeps modeling conservative. If labels exist, supervised baselines
 use grouped splits by source or record when available. If labels are missing or
 supervised modeling is not defensible, the pipeline falls back to exploratory
 Isolation Forest anomaly scoring when enough numeric features exist.
+
+The configured `analysis.window` values are available for explicit segmentation
+or sliding-window analysis; whole-record analysis does not segment records
+silently.
 
 ### 6. Save A Markdown Summary
 

@@ -12,7 +12,11 @@ from numpy.typing import NDArray
 from scipy.io import wavfile
 
 from signal_processing_prep.config import ProjectConfig, load_config
-from signal_processing_prep.records import SignalRecord
+from signal_processing_prep.records import (
+    AcquisitionDiagnostics,
+    SignalProvenance,
+    SignalRecord,
+)
 
 _COMMON_TIME_COLUMNS = {"time", "timestamp", "t", "seconds", "time_s", "time_seconds"}
 _METADATA_KEY_COLUMNS = ("record_name", "name", "file_name", "filename", "stem", "source_path")
@@ -46,16 +50,25 @@ def load_signal_file(
                 inferred_sampling_rate_hz=inferred_sampling_rate,
             )
         )
+        acquisition = _acquisition_diagnostics(metadata)
     elif suffix == ".txt":
         values = _load_text(file_path, channel=channel)
         metadata = _channel_metadata(channel)
         detected_label = None
         record_sampling_rate = _require_sampling_rate(sampling_rate_hz, file_path)
+        acquisition = AcquisitionDiagnostics(
+            sampling_rate_source="provided",
+            provided_sampling_rate_hz=record_sampling_rate,
+        )
     elif suffix == ".npy":
         values = _load_npy(file_path, channel=channel)
         metadata = _channel_metadata(channel)
         detected_label = None
         record_sampling_rate = _require_sampling_rate(sampling_rate_hz, file_path)
+        acquisition = AcquisitionDiagnostics(
+            sampling_rate_source="provided",
+            provided_sampling_rate_hz=record_sampling_rate,
+        )
     elif suffix == ".wav":
         record_sampling_rate, values, metadata = _load_wav(file_path, channel=channel)
         detected_label = None
@@ -63,6 +76,7 @@ def load_signal_file(
             raise ValueError(
                 "Provided sampling_rate_hz does not match the WAV file sampling rate."
             )
+        acquisition = AcquisitionDiagnostics(sampling_rate_source="wav_header")
     else:
         raise ValueError(f"Unsupported signal file extension: {suffix}")
 
@@ -72,6 +86,12 @@ def load_signal_file(
         label=label if label is not None else detected_label,
         name=file_path.stem,
         metadata={"source_path": str(file_path), **metadata},
+        provenance=SignalProvenance(
+            source_name=file_path.stem,
+            source_path=str(file_path),
+            channel_index=channel,
+        ),
+        acquisition=acquisition,
     )
 
 
@@ -407,6 +427,13 @@ def _rename_channel_record(record: SignalRecord, channel_name: str, channel_inde
             "channel_name": channel_name,
             "channel_index": channel_index,
         },
+        provenance=SignalProvenance(
+            source_name=record.provenance.source_name or record.name,
+            source_path=record.provenance.source_path,
+            channel_name=channel_name,
+            channel_index=channel_index,
+        ),
+        acquisition=record.acquisition,
     )
 
 
@@ -475,6 +502,8 @@ def _apply_external_metadata(
         label=label,
         name=record.name,
         metadata=metadata,
+        provenance=record.provenance,
+        acquisition=record.acquisition,
     )
 
 
@@ -539,6 +568,41 @@ def _optional_metadata_float(metadata: Mapping[str, Any], key: str) -> float | N
     if value is None or pd.isna(value):
         return None
     return float(value)
+
+
+def _optional_metadata_int(metadata: Mapping[str, Any], key: str) -> int | None:
+    value = metadata.get(key)
+    if value is None or pd.isna(value):
+        return None
+    return int(value)
+
+
+def _optional_metadata_bool(metadata: Mapping[str, Any], key: str) -> bool | None:
+    value = metadata.get(key)
+    if value is None or pd.isna(value):
+        return None
+    return bool(value)
+
+
+def _acquisition_diagnostics(metadata: Mapping[str, Any]) -> AcquisitionDiagnostics:
+    """Build typed acquisition diagnostics while retaining legacy metadata."""
+    time_column = metadata.get("time_column")
+    sampling_rate_source = metadata.get("sampling_rate_source")
+    return AcquisitionDiagnostics(
+        sampling_rate_source=str(sampling_rate_source) if sampling_rate_source is not None else None,
+        provided_sampling_rate_hz=_optional_metadata_float(metadata, "provided_sampling_rate_hz"),
+        inferred_sampling_rate_hz=_optional_metadata_float(metadata, "inferred_sampling_rate_hz"),
+        time_column=str(time_column) if time_column is not None else None,
+        time_axis_valid=_optional_metadata_bool(metadata, "time_axis_valid"),
+        time_start_seconds=_optional_metadata_float(metadata, "time_start_seconds"),
+        time_end_seconds=_optional_metadata_float(metadata, "time_end_seconds"),
+        time_step_median_seconds=_optional_metadata_float(metadata, "time_step_median_seconds"),
+        time_step_jitter_fraction=_optional_metadata_float(metadata, "time_step_jitter_fraction"),
+        time_gap_count=_optional_metadata_int(metadata, "time_gap_count"),
+        sampling_rate_mismatch_fraction=_optional_metadata_float(
+            metadata, "sampling_rate_mismatch_fraction"
+        ),
+    )
 
 
 def _normalize_wav_values(values: NDArray[Any]) -> NDArray[np.float64]:

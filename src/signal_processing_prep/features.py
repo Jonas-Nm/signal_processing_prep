@@ -116,6 +116,8 @@ def sliding_window_features(
         end_seconds = end_index / record.sampling_rate_hz
         row: dict[str, float | str | None] = {
             "record_name": record.name,
+            "source_name": record.provenance.source_name,
+            "source_path": record.provenance.source_path,
             "label": record.label,
             "window_start_seconds": start_seconds,
             "window_end_seconds": end_seconds,
@@ -157,6 +159,8 @@ def _record_features(
 ) -> dict[str, float | str | None]:
     row: dict[str, float | str | None] = {
         "record_name": record.name,
+        "source_name": record.provenance.source_name,
+        "source_path": record.provenance.source_path,
         "label": record.label,
         "sampling_rate_hz": record.sampling_rate_hz,
         "n_samples": float(record.n_samples),

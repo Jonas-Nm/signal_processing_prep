@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from signal_processing_prep.records import SignalRecord
+from signal_processing_prep.records import AcquisitionDiagnostics, SignalProvenance, SignalRecord
 
 
 def test_signal_record_normalizes_values_and_exposes_shape() -> None:
@@ -22,6 +22,7 @@ def test_signal_record_normalizes_values_and_exposes_shape() -> None:
     assert record.label == "normal"
     assert record.name == "example"
     assert record.metadata["sensor"] == "accelerometer"
+    assert record.provenance.source_name == "example"
     np.testing.assert_allclose(record.time_seconds, [0.0, 0.25, 0.5, 0.75])
 
 
@@ -35,3 +36,18 @@ def test_signal_record_rejects_invalid_values() -> None:
 
     with pytest.raises(ValueError, match="positive"):
         SignalRecord(values=[1.0], sampling_rate_hz=0.0)
+
+
+def test_signal_record_accepts_typed_source_and_acquisition_contracts() -> None:
+    """Core source and acquisition facts do not need free-form metadata keys."""
+    record = SignalRecord(
+        values=[0.0, 1.0],
+        sampling_rate_hz=10.0,
+        name="segment",
+        provenance=SignalProvenance(source_name="capture", source_path="capture.csv"),
+        acquisition=AcquisitionDiagnostics(time_gap_count=2, time_axis_valid=False),
+    )
+
+    assert record.provenance.source_name == "capture"
+    assert record.provenance.source_path == "capture.csv"
+    assert record.acquisition.time_gap_count == 2

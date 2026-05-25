@@ -3,14 +3,16 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
-from signal_processing_prep.config import FilteringConfig
+from signal_processing_prep.config import FilteringConfig, load_config
 from signal_processing_prep.features import FrequencyBand
 from signal_processing_prep.frequency_domain import band_energy
 from signal_processing_prep.pipeline import (
     AnalysisPipelineConfig,
+    analyze_dataset,
     analyze_records,
     run_synthetic_analysis,
 )
@@ -138,6 +140,39 @@ def test_analyze_records_rejects_empty_input() -> None:
         analyze_records([])
 
 
+def test_configured_dataset_analysis_maps_frequency_bands_and_filtering(tmp_path: Path) -> None:
+    """The high-level configured workflow applies analysis-relevant YAML settings."""
+    time = np.arange(2000, dtype=float) / 1000.0
+    values = np.sin(2.0 * np.pi * 20.0 * time) + np.sin(2.0 * np.pi * 200.0 * time)
+    pd.DataFrame({"time": time, "signal": values}).to_csv(tmp_path / "mixed.csv", index=False)
+    config_path = tmp_path / "configured.yaml"
+    config_path.write_text(
+        f"""
+paths:
+  data_dir: "{tmp_path.as_posix()}"
+loading:
+  file_patterns: ["*.csv"]
+  signal_column: signal
+analysis:
+  frequency_bands_hz:
+    target: [0, 50]
+filtering:
+  enabled: true
+  kind: lowpass
+  high_cut_hz: 50
+""",
+        encoding="utf-8",
+    )
+
+    result = analyze_dataset(config_path, pipeline_config=None)
+    runtime = AnalysisPipelineConfig.from_project_config(load_config(config_path), run_modeling=False)
+
+    assert "band_energy_target" in result.features.columns
+    assert runtime.frequency_bands[0].name == "target"
+    assert result.records[0].metadata["preprocessing"]["filter_kind"] == "lowpass"
+    assert result.features.loc[0, "dominant_frequency_hz"] == pytest.approx(20.0)
+
+
 def test_phase_nine_notebook_exists_and_uses_package_apis() -> None:
     """The main walkthrough notebook is present and calls package functions."""
     notebook_path = Path("notebooks/01_signal_analysis_walkthrough.ipynb")
@@ -152,5 +187,6 @@ def test_phase_nine_notebook_exists_and_uses_package_apis() -> None:
     assert 'config_path = Path("configs/synthetic.yaml")' in source
     assert "from signal_processing_prep.pipeline import" in source
     assert "make_synthetic_dataset()" in source
+    assert "AnalysisPipelineConfig.from_project_config(" in source
     assert "analyze_records(" in source
     assert "save_markdown_summary" in source

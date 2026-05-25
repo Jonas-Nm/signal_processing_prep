@@ -42,6 +42,7 @@ def test_extract_features_returns_one_row_per_signal_record() -> None:
 
     assert features.shape[0] == 2
     assert features["record_name"].tolist() == ["tone-10", "tone-30"]
+    assert features["source_name"].tolist() == ["tone-10", "tone-30"]
     assert features["label"].tolist() == ["normal", "fault"]
     assert features["dominant_frequency_hz"].tolist() == pytest.approx([10.0, 30.0])
 
@@ -312,4 +313,5 @@ def test_sliding_window_features_handles_raw_record_metadata() -> None:
     features = sliding_window_features(record, config)
 
     assert features["record_name"].tolist() == ["constant", "constant"]
+    assert features["source_name"].tolist() == ["constant", "constant"]
     assert features["label"].isna().all()

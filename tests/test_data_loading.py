@@ -69,6 +69,10 @@ def test_load_csv_infers_sampling_rate_and_time_axis_metadata(tmp_path: Path) ->
     assert record.metadata["time_column"] == "time"
     assert record.metadata["time_gap_count"] == 0
     assert record.metadata["time_step_jitter_fraction"] > 0.0
+    assert record.provenance.source_name == "timed"
+    assert record.provenance.source_path == str(path)
+    assert record.acquisition.sampling_rate_source == "time_column"
+    assert record.acquisition.time_step_jitter_fraction > 0.0
 
 
 def test_load_csv_requires_signal_column_for_ambiguous_numeric_columns(
@@ -152,6 +156,8 @@ def test_load_signal_file_channels_splits_multi_channel_wav(tmp_path: Path) -> N
 
     assert [record.name for record in records] == ["stereo_0", "stereo_1"]
     assert [record.metadata["channel_index"] for record in records] == [0, 1]
+    assert [record.provenance.channel_index for record in records] == [0, 1]
+    assert {record.provenance.source_name for record in records} == {"stereo"}
     np.testing.assert_allclose(records[0].values, [0.0, 0.5, 0.0], atol=1e-4)
     np.testing.assert_allclose(records[1].values, [0.0, -0.5, 0.0], atol=1e-4)
 

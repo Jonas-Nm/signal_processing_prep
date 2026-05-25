@@ -14,7 +14,7 @@ from signal_processing_prep.preprocessing import (
     segment_dataset,
     segment_signal,
 )
-from signal_processing_prep.records import SignalRecord
+from signal_processing_prep.records import AcquisitionDiagnostics, SignalProvenance, SignalRecord
 from signal_processing_prep.synthetic import add_signals, sine_wave
 
 
@@ -167,7 +167,13 @@ def test_interpolate_missing_values_refuses_large_missing_fraction() -> None:
 
 def test_segment_signal_returns_explicit_windows() -> None:
     """Windowing utilities preserve timing metadata for each segment."""
-    record = SignalRecord(values=np.arange(10, dtype=float), sampling_rate_hz=10.0, name="ramp")
+    record = SignalRecord(
+        values=np.arange(10, dtype=float),
+        sampling_rate_hz=10.0,
+        name="ramp_channel",
+        provenance=SignalProvenance(source_name="ramp", source_path="capture.csv"),
+        acquisition=AcquisitionDiagnostics(time_gap_count=0),
+    )
 
     windows = segment_signal(record, window_seconds=0.4, step_seconds=0.2)
 
@@ -175,6 +181,9 @@ def test_segment_signal_returns_explicit_windows() -> None:
     assert windows[0].values.tolist() == [0.0, 1.0, 2.0, 3.0]
     assert windows[1].metadata["window_start_seconds"] == 0.2
     assert windows[-1].metadata["window_end_seconds"] == 1.0
+    assert {window.provenance.source_name for window in windows} == {"ramp"}
+    assert windows[0].provenance.source_path == "capture.csv"
+    assert windows[0].acquisition == record.acquisition
 
 
 def test_segment_signal_can_include_partial_window() -> None:

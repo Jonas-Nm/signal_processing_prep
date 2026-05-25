@@ -8,7 +8,7 @@ from signal_processing_prep.quality import (
     assess_dataset_quality,
     assess_signal_quality,
 )
-from signal_processing_prep.records import SignalRecord
+from signal_processing_prep.records import AcquisitionDiagnostics, SignalRecord
 from signal_processing_prep.synthetic import clipped_signal, sine_wave
 
 
@@ -120,6 +120,27 @@ def test_assess_signal_quality_flags_sampling_rate_mismatch_from_metadata() -> N
     assert report.has_sampling_rate_mismatch is True
     assert report.sampling_rate_mismatch_fraction == 0.2
     assert "sampling_rate_mismatch" in report.issues
+
+
+def test_assess_signal_quality_prefers_typed_acquisition_diagnostics() -> None:
+    """Typed diagnostics drive core checks while legacy metadata remains fallback input."""
+    record = SignalRecord(
+        values=np.ones(10),
+        sampling_rate_hz=10.0,
+        metadata={"time_gap_count": 0},
+        acquisition=AcquisitionDiagnostics(
+            time_axis_valid=True,
+            time_step_jitter_fraction=0.2,
+            time_gap_count=2,
+            sampling_rate_mismatch_fraction=0.3,
+        ),
+    )
+
+    report = assess_signal_quality(record, QualityCheckConfig(time_step_jitter_threshold=0.05))
+
+    assert report.time_gap_count == 2
+    assert report.has_time_axis_irregularity is True
+    assert report.has_sampling_rate_mismatch is True
 
 
 def test_assess_dataset_quality_returns_one_row_per_record() -> None:

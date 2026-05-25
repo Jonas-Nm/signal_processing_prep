@@ -4,7 +4,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from signal_processing_prep.features import FrequencyBand, SlidingWindowConfig, sliding_window_features
+from signal_processing_prep.features import (
+    FrequencyBand,
+    SlidingWindowConfig,
+    extract_features,
+    sliding_window_features,
+)
 from signal_processing_prep.modeling import (
     anomaly_summary_text,
     run_dbscan_outlier_scores,
@@ -19,6 +24,8 @@ from signal_processing_prep.modeling import (
     top_anomalies,
 )
 from signal_processing_prep.records import SignalRecord
+from signal_processing_prep.preprocessing import segment_signal
+from signal_processing_prep.synthetic import sine_wave
 
 
 def _separable_features() -> pd.DataFrame:
@@ -162,6 +169,53 @@ def test_supervised_baselines_keep_grouped_windows_together() -> None:
     for evaluation in results.values():
         assert "group_column=source_name" in evaluation.split_strategy
         assert evaluation.predictions["source_name"].value_counts().eq(2).all()
+
+
+def test_segmented_feature_pipeline_preserves_groups_for_model_evaluation() -> None:
+    """Source identity survives segment-to-feature conversion used by the model."""
+    windows = []
+    for label, frequency, prefix in (("normal", 10.0, "n"), ("fault", 80.0, "f")):
+        for index in range(2):
+            source = sine_wave(
+                frequency_hz=frequency + index,
+                duration_seconds=2.0,
+                label=label,
+                name=f"{prefix}{index}",
+            )
+            windows.extend(segment_signal(source, window_seconds=1.0))
+    features = extract_features(windows)
+
+    results = run_supervised_baselines(features, group_column="source_name", test_size=0.5)
+
+    assert features.groupby("source_name").size().eq(2).all()
+    for evaluation in results.values():
+        assert "group_column=source_name" in evaluation.split_strategy
+        assert evaluation.predictions.groupby("source_name").size().eq(2).all()
+
+
+def test_supervised_imputation_is_fitted_from_training_rows_only() -> None:
+    """Held-out missing values do not influence supervised preprocessing."""
+    features = pd.DataFrame(
+        {
+            "source_name": ["n1", "n1", "n2", "n2", "f1", "f1", "f2", "f2"],
+            "label": ["normal", "normal", "normal", "normal", "fault", "fault", "fault", "fault"],
+            "rms": [1.0, 1.1, 1.2, 1.3, 3.0, 3.1, 3.2, 3.3],
+            "repair_me": [1.0, 2.0, 3.0, 4.0, 101.0, 102.0, 103.0, 104.0],
+        }
+    )
+    first = run_supervised_baselines(features, group_column="source_name", test_size=0.5, random_state=3)
+    held_out_sources = set(first["logistic_regression"].predictions["source_name"])
+    changed = features.copy()
+    changed.loc[changed["source_name"].isin(held_out_sources), "repair_me"] = np.nan
+
+    second = run_supervised_baselines(changed, group_column="source_name", test_size=0.5, random_state=3)
+    evaluation = second["logistic_regression"]
+    column_index = evaluation.feature_columns.index("repair_me")
+    expected_median = changed.loc[
+        ~changed["source_name"].isin(held_out_sources), "repair_me"
+    ].median()
+
+    assert evaluation.estimator.named_steps["imputer"].statistics_[column_index] == expected_median
 
 
 def test_top_anomalies_and_summary_text_are_inspection_oriented() -> None:

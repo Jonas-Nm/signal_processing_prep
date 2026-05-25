@@ -290,8 +290,12 @@ def _time_axis_indicators(
     record: SignalRecord,
     config: QualityCheckConfig,
 ) -> tuple[float, int, bool]:
-    jitter = _metadata_float(record.metadata.get("time_step_jitter_fraction"))
-    gap_count = _metadata_int(record.metadata.get("time_gap_count"))
+    jitter = record.acquisition.time_step_jitter_fraction
+    if jitter is None:
+        jitter = _metadata_float(record.metadata.get("time_step_jitter_fraction"))
+    gap_count = record.acquisition.time_gap_count
+    if gap_count is None:
+        gap_count = _metadata_int(record.metadata.get("time_gap_count"))
     if jitter is None:
         jitter = 0.0
     if gap_count is None:
@@ -299,7 +303,12 @@ def _time_axis_indicators(
     irregular = (
         jitter > config.time_step_jitter_threshold
         or gap_count > config.time_gap_count_threshold
-        or record.metadata.get("time_axis_valid") is False
+        or (
+            record.acquisition.time_axis_valid
+            if record.acquisition.time_axis_valid is not None
+            else record.metadata.get("time_axis_valid")
+        )
+        is False
     )
     return jitter, gap_count, irregular
 
@@ -308,7 +317,9 @@ def _sampling_rate_mismatch_indicators(
     record: SignalRecord,
     config: QualityCheckConfig,
 ) -> tuple[float, bool]:
-    mismatch_fraction = _metadata_float(record.metadata.get("sampling_rate_mismatch_fraction"))
+    mismatch_fraction = record.acquisition.sampling_rate_mismatch_fraction
+    if mismatch_fraction is None:
+        mismatch_fraction = _metadata_float(record.metadata.get("sampling_rate_mismatch_fraction"))
     if mismatch_fraction is None:
         mismatch_fraction = 0.0
     return mismatch_fraction, mismatch_fraction > config.sampling_rate_mismatch_threshold

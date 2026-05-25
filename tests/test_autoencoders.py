@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from scripts.generate_spectrogram_autoencoder_demo_csv import generate_demo_records
 import signal_processing_prep.autoencoders as autoencoders
 from signal_processing_prep.autoencoders import (
     SpectrogramAutoencoderConfig,
@@ -19,6 +18,9 @@ from signal_processing_prep.autoencoders import (
 )
 from signal_processing_prep.config import load_config
 from signal_processing_prep.data_loading import load_signal_dataset
+from signal_processing_prep.demo_data import (
+    generate_spectrogram_autoencoder_demo_records as generate_demo_records,
+)
 from signal_processing_prep.records import SignalRecord
 
 

@@ -55,6 +55,7 @@ from signal_processing_prep.plotting import (
 from signal_processing_prep.pipeline import (
     AnalysisPipelineConfig,
     AnalysisPipelineResult,
+    analyze_dataset,
     analyze_records,
     run_synthetic_analysis,
 )
@@ -79,7 +80,7 @@ from signal_processing_prep.reporting import (
     generate_markdown_summary,
     save_markdown_summary,
 )
-from signal_processing_prep.records import SignalRecord
+from signal_processing_prep.records import AcquisitionDiagnostics, SignalProvenance, SignalRecord
 
 __version__ = "0.1.0"
 
@@ -90,12 +91,14 @@ __all__ = [
     "SlidingWindowConfig",
     "AnalysisPipelineConfig",
     "AnalysisPipelineResult",
+    "AcquisitionDiagnostics",
     "MarkdownReport",
     "ModelEvaluation",
     "ProjectConfig",
     "QualityCheckConfig",
     "QualityReport",
     "SignalRecord",
+    "SignalProvenance",
     "SpectrogramAutoencoderConfig",
     "SpectrogramAutoencoderDemoDataset",
     "SpectrogramAutoencoderResult",
@@ -105,6 +108,7 @@ __all__ = [
     "apply_filter",
     "apply_window",
     "analyze_records",
+    "analyze_dataset",
     "anomaly_summary_text",
     "assess_dataset_quality",
     "assess_signal_quality",

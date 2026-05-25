@@ -58,7 +58,7 @@ signal_processing_prep/
 
 - `config.py`: load and validate YAML configuration into typed structures.
 - `data_loading.py`: load CSV, TXT, NPY, and WAV files into a shared signal record model.
-- `records.py`: define shared dataclasses such as `SignalRecord`.
+- `records.py`: define shared dataclasses such as `SignalRecord`, typed provenance, and acquisition diagnostics.
 - `synthetic.py`: generate example signals for demos and tests.
 - `quality.py`: check duration, missing values, clipping, scaling, and stationarity indicators.
 - `preprocessing.py`: provide optional filtering and windowing utilities.
@@ -69,7 +69,7 @@ signal_processing_prep/
 - `modeling.py`: provide simple supervised and unsupervised baselines.
 - `plotting.py`: create presentation-ready matplotlib figures.
 - `reporting.py`: generate concise Markdown summaries.
-- `pipeline.py`: orchestrate the preferred workflow while delegating implementation to focused modules.
+- `pipeline.py`: orchestrate configured or in-memory workflows while delegating implementation to focused modules.
 
 ## Phase 0: Planning Docs And AGENTS Cleanup
 

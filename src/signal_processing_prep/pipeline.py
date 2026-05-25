@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
+from signal_processing_prep.config import FilteringConfig, ProjectConfig, load_config
+from signal_processing_prep.data_loading import load_signal_dataset
 from signal_processing_prep.features import (
     FeatureExtractionConfig,
     FrequencyBand,
     extract_features,
+    frequency_bands_from_mapping,
 )
 from signal_processing_prep.modeling import (
     ModelEvaluation,
@@ -18,7 +23,6 @@ from signal_processing_prep.modeling import (
     run_isolation_forest,
     run_supervised_baselines,
 )
-from signal_processing_prep.config import FilteringConfig
 from signal_processing_prep.preprocessing import apply_configured_filter
 from signal_processing_prep.quality import (
     QualityCheckConfig,
@@ -46,6 +50,22 @@ class AnalysisPipelineConfig:
     filtering: FilteringConfig = field(default_factory=FilteringConfig)
     features: FeatureExtractionConfig | None = None
     invalid_record_policy: str = "skip"
+
+    @classmethod
+    def from_project_config(
+        cls,
+        project_config: ProjectConfig,
+        **overrides: Any,
+    ) -> AnalysisPipelineConfig:
+        """Create runtime analysis settings from a loaded project configuration."""
+        values: dict[str, Any] = {
+            "frequency_bands": frequency_bands_from_mapping(
+                project_config.analysis.frequency_bands_hz
+            ),
+            "filtering": project_config.filtering,
+        }
+        values.update(overrides)
+        return cls(**values)
 
 
 @dataclass(frozen=True)
@@ -130,6 +150,28 @@ def run_synthetic_analysis(
 ) -> AnalysisPipelineResult:
     """Run the complete analysis workflow on the built-in synthetic dataset."""
     return analyze_records(make_synthetic_dataset(), config=config)
+
+
+def analyze_dataset(
+    config: ProjectConfig | str | Path,
+    *,
+    metadata_table: str | Path | pd.DataFrame | None = None,
+    labels_by_name: Mapping[str, str] | None = None,
+    split_channels: bool = True,
+    pipeline_config: AnalysisPipelineConfig | None = None,
+) -> AnalysisPipelineResult:
+    """Load and analyze a configured dataset through one explicit workflow."""
+    project_config = load_config(config) if isinstance(config, str | Path) else config
+    records = load_signal_dataset(
+        project_config,
+        metadata_table=metadata_table,
+        labels_by_name=labels_by_name,
+        split_channels=split_channels,
+    )
+    runtime_config = pipeline_config or AnalysisPipelineConfig.from_project_config(
+        project_config
+    )
+    return analyze_records(records, runtime_config)
 
 
 def _run_optional_modeling(

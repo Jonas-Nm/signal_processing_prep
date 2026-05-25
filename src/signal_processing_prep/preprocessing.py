@@ -9,7 +9,7 @@ import numpy as np
 from scipy import signal as scipy_signal
 
 from signal_processing_prep.config import FilteringConfig
-from signal_processing_prep.records import SignalRecord
+from signal_processing_prep.records import SignalProvenance, SignalRecord
 
 
 @dataclass(frozen=True)
@@ -74,6 +74,8 @@ def apply_filter(record: SignalRecord, spec: FilterSpec) -> SignalRecord:
                 "allow_causal_fallback": spec.allow_causal_fallback,
             },
         },
+        provenance=record.provenance,
+        acquisition=record.acquisition,
     )
 
 
@@ -152,6 +154,8 @@ def interpolate_missing_values(
                 },
             },
         },
+        provenance=record.provenance,
+        acquisition=record.acquisition,
     )
 
 
@@ -185,6 +189,8 @@ def apply_window(
             },
             "window": window_metadata,
         },
+        provenance=record.provenance,
+        acquisition=record.acquisition,
     )
 
 
@@ -307,6 +313,13 @@ def _window_record(
             "window_start_sample": start_index,
             "window_end_sample": end_index,
         },
+        provenance=SignalProvenance(
+            source_name=record.provenance.source_name or record.name,
+            source_path=record.provenance.source_path,
+            channel_name=record.provenance.channel_name,
+            channel_index=record.provenance.channel_index,
+        ),
+        acquisition=record.acquisition,
     )
 
 

@@ -10,6 +10,33 @@ from numpy.typing import NDArray
 
 
 @dataclass(frozen=True)
+class SignalProvenance:
+    """Stable source identity for one signal or derived signal segment."""
+
+    source_name: str | None = None
+    source_path: str | None = None
+    channel_name: str | None = None
+    channel_index: int | None = None
+
+
+@dataclass(frozen=True)
+class AcquisitionDiagnostics:
+    """Loader-derived acquisition and sampling-time diagnostics."""
+
+    sampling_rate_source: str | None = None
+    provided_sampling_rate_hz: float | None = None
+    inferred_sampling_rate_hz: float | None = None
+    time_column: str | None = None
+    time_axis_valid: bool | None = None
+    time_start_seconds: float | None = None
+    time_end_seconds: float | None = None
+    time_step_median_seconds: float | None = None
+    time_step_jitter_fraction: float | None = None
+    time_gap_count: int | None = None
+    sampling_rate_mismatch_fraction: float | None = None
+
+
+@dataclass(frozen=True)
 class SignalRecord:
     """Container for one sampled time-series signal and its metadata."""
 
@@ -18,6 +45,8 @@ class SignalRecord:
     label: str | None = None
     name: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    provenance: SignalProvenance = field(default_factory=SignalProvenance)
+    acquisition: AcquisitionDiagnostics = field(default_factory=AcquisitionDiagnostics)
 
     def __post_init__(self) -> None:
         """Validate and normalize signal values after initialization."""
@@ -30,6 +59,17 @@ class SignalRecord:
             raise ValueError("sampling_rate_hz must be positive.")
 
         object.__setattr__(self, "values", values)
+        if self.provenance.source_name is None and self.name is not None:
+            object.__setattr__(
+                self,
+                "provenance",
+                SignalProvenance(
+                    source_name=self.name,
+                    source_path=self.provenance.source_path,
+                    channel_name=self.provenance.channel_name,
+                    channel_index=self.provenance.channel_index,
+                ),
+            )
 
     @property
     def n_samples(self) -> int:
