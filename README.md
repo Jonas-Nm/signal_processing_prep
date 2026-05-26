@@ -92,7 +92,11 @@ Multi-channel inputs are represented as separate records with explicit channel p
 
 ## Notebooks
 
-- `notebooks/01_signal_analysis_walkthrough.ipynb`: complete synthetic first pass.
-- `notebooks/02_dsp_foundations_examples.ipynb`: DSP calculation examples.
-- `notebooks/03_feature_based_anomaly_detection_walkthrough.ipynb`: window features and scorer strategies.
-- `notebooks/04_synthetic_spectrogram_autoencoder_walkthrough.ipynb`: optional typed autoencoder experiment.
+Recommended interview-preparation sequence:
+
+1. `notebooks/02_dsp_foundations_examples.ipynb`: controlled DSP concept laboratory with expected results, aliasing, windowing, localization, and envelope analysis.
+2. `notebooks/01_signal_analysis_walkthrough_v2.ipynb`: blinded single-record investigation that reports candidate regions before revealing synthetic validation timing.
+3. `notebooks/03_feature_based_anomaly_detection_walkthrough.ipynb`: fair shared-feature comparison of interpretable anomaly scorers and region-level agreement.
+4. `notebooks/04_synthetic_spectrogram_autoencoder_walkthrough.ipynb`: optional controlled neural reconstruction-error experiment, separate from the unlabeled single-record evidence.
+
+`notebooks/01_signal_analysis_walkthrough.ipynb` remains the general synthetic pipeline first pass; the `v2` notebook is the focused investigation walkthrough.

@@ -21,6 +21,10 @@ SUPERVISED_METADATA_COLUMNS = (
 
 ANOMALY_METADATA_COLUMNS = (
     "record_name",
+    "source_name",
+    "source_path",
+    "channel_name",
+    "channel_index",
     "label",
     "window_start_seconds",
     "window_end_seconds",

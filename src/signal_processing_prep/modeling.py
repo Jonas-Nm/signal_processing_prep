@@ -20,6 +20,11 @@ from signal_processing_prep._modeling_common import (
     anomaly_summary_text,
     top_anomalies,
 )
+from signal_processing_prep._modeling_regions import (
+    consensus_candidate_regions,
+    evaluate_candidate_region_overlap,
+    group_candidate_regions,
+)
 from signal_processing_prep._modeling_supervised import run_supervised_baselines as _run_supervised
 from signal_processing_prep.artifacts import FeatureTable
 from signal_processing_prep.errors import ConfigurationError
@@ -223,5 +228,8 @@ __all__ = [
     "RobustMahalanobisScorer",
     "SupervisedBaselineSuite",
     "anomaly_summary_text",
+    "consensus_candidate_regions",
+    "evaluate_candidate_region_overlap",
+    "group_candidate_regions",
     "top_anomalies",
 ]
