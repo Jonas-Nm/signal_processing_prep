@@ -71,7 +71,12 @@ def test_dsp_foundations_notebook_includes_aliasing_and_finished_envelope_lesson
 
     assert "Sampling And Aliasing" in source
     assert "above_nyquist" in source
+    assert "Teager-Kaiser Energy And Instantaneous Frequency" in source
+    assert "teager_kaiser_demodulation" in source
     assert "Envelope Analysis With The Hilbert Transform" in source
+    assert "Hilbert-Huang Transform: Adaptive Modes" in source
+    assert "hilbert_huang_transform" in source
+    assert "plot_hilbert_huang_spectrum" in source
     assert "TODO: being able to create the am record" not in source
 
 

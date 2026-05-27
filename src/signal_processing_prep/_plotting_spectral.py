@@ -13,7 +13,13 @@ from matplotlib.widgets import Slider
 from signal_processing_prep._plotting_time import windowed_data
 from signal_processing_prep.frequency_domain import fft_magnitude, psd
 from signal_processing_prep.records import SignalRecord
-from signal_processing_prep.time_frequency import morlet_wavelet_scalogram, spectrogram_analysis
+from signal_processing_prep.time_frequency import (
+    HilbertHuangResult,
+    morlet_wavelet_scalogram,
+    spectrogram_analysis,
+    teager_kaiser_demodulation,
+    teager_kaiser_energy,
+)
 
 
 def plot_frequency_spectrum(
@@ -132,7 +138,93 @@ def plot_spectrogram(
         vmin=vmin_db,
         vmax=vmax_db,
     )
-    _configure_time_frequency_axes(fig, ax, mesh, record, frequency_scale, "Power [dB]", "spectrogram")
+    _configure_time_frequency_axes(
+        fig,
+        ax,
+        mesh,
+        record.name or "Signal",
+        frequency_scale,
+        "Power [dB]",
+        "spectrogram",
+    )
+    fig.tight_layout()
+    if show:
+        plt.show()
+    return fig, ax
+
+
+def plot_teager_kaiser_energy(
+    record: SignalRecord,
+    *,
+    start_seconds: float | None = None,
+    duration_seconds: float | None = None,
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot the sample-aligned Teager-Kaiser energy trace for one record."""
+    result = teager_kaiser_energy(record)
+    visible_mask = _analysis_window_mask(
+        record,
+        result.time_seconds,
+        start_seconds=start_seconds,
+        duration_seconds=duration_seconds,
+    )
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 4))
+    else:
+        fig = ax.figure
+    ax.plot(
+        result.time_seconds[visible_mask],
+        result.energy[visible_mask],
+        linewidth=1.0,
+        label=record.label or record.name or "signal",
+    )
+    ax.set_title(f"{record.name or 'Signal'} - Teager-Kaiser energy")
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("TKEO energy [amplitude^2]")
+    ax.grid(True, alpha=0.3)
+    if record.label is not None:
+        ax.legend(loc="best")
+    fig.tight_layout()
+    if show:
+        plt.show()
+    return fig, ax
+
+
+def plot_teager_kaiser_frequency(
+    record: SignalRecord,
+    *,
+    start_seconds: float | None = None,
+    duration_seconds: float | None = None,
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot valid DESA-2 instantaneous-frequency estimates for one record."""
+    result = teager_kaiser_demodulation(record)
+    visible_mask = _analysis_window_mask(
+        record,
+        result.time_seconds,
+        start_seconds=start_seconds,
+        duration_seconds=duration_seconds,
+    )
+    frequency_hz = result.instantaneous_frequency_hz.copy()
+    frequency_hz[~result.valid_mask] = np.nan
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 4))
+    else:
+        fig = ax.figure
+    ax.plot(
+        result.time_seconds[visible_mask],
+        frequency_hz[visible_mask],
+        linewidth=1.0,
+        label=record.label or record.name or "signal",
+    )
+    ax.set_title(f"{record.name or 'Signal'} - Teager-Kaiser instantaneous frequency")
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Instantaneous frequency [Hz]")
+    ax.grid(True, alpha=0.3)
+    if record.label is not None:
+        ax.legend(loc="best")
     fig.tight_layout()
     if show:
         plt.show()
@@ -194,7 +286,7 @@ def plot_spectrogram_dynamic_range(
         result.frequencies_hz, result.power, max_frequency_hz, frequency_scale
     )
     return _dynamic_power_plot(
-        record,
+        record.name or "Signal",
         result.times_seconds,
         frequencies,
         power,
@@ -238,7 +330,7 @@ def plot_wavelet_scalogram(
         result.frequencies_hz, result.power, frequency_scale
     )
     return _dynamic_power_plot(
-        record,
+        record.name or "Signal",
         result.times_seconds,
         frequencies,
         power,
@@ -254,8 +346,76 @@ def plot_wavelet_scalogram(
     )
 
 
+def plot_hilbert_huang_imfs(
+    result: HilbertHuangResult,
+    *,
+    include_residual: bool = True,
+    max_imfs: int | None = None,
+    show: bool = False,
+) -> tuple[Figure, NDArray[np.object_]]:
+    """Plot HHT intrinsic mode functions and optional residual as stacked traces."""
+    if max_imfs is not None and (not isinstance(max_imfs, int) or max_imfs <= 0):
+        raise ValueError("max_imfs must be a positive integer or None.")
+    n_imfs = result.intrinsic_mode_functions.shape[0]
+    n_shown = n_imfs if max_imfs is None else min(n_imfs, max_imfs)
+    n_panels = max(n_shown + int(include_residual), 1)
+    fig, raw_axes = plt.subplots(n_panels, 1, figsize=(10, 2.2 * n_panels), sharex=True)
+    axes = np.atleast_1d(raw_axes)
+    for index in range(n_shown):
+        axes[index].plot(result.time_seconds, result.intrinsic_mode_functions[index], linewidth=0.9)
+        axes[index].set_ylabel(f"IMF {index + 1}")
+        axes[index].grid(True, alpha=0.3)
+    if include_residual:
+        residual_axis = axes[n_shown]
+        residual_axis.plot(result.time_seconds, result.residual, linewidth=0.9)
+        residual_axis.set_ylabel("Residual")
+        residual_axis.grid(True, alpha=0.3)
+    if n_shown == 0 and not include_residual:
+        axes[0].text(0.5, 0.5, "No oscillatory IMFs extracted", ha="center", va="center")
+        axes[0].set_yticks([])
+    axes[0].set_title(f"{result.method.upper()} Hilbert-Huang decomposition")
+    axes[-1].set_xlabel("Time [s]")
+    fig.tight_layout()
+    if show:
+        plt.show()
+    return fig, axes
+
+
+def plot_hilbert_huang_spectrum(
+    result: HilbertHuangResult,
+    *,
+    frequency_scale: str = "linear",
+    dynamic_range_db: float = 80.0,
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot a binned Hilbert energy spectrum from an existing HHT result."""
+    if dynamic_range_db <= 0:
+        raise ValueError("dynamic_range_db must be positive.")
+    frequencies, power = _apply_frequency_scale(
+        result.spectrum_frequencies_hz,
+        result.spectrum_power,
+        frequency_scale,
+    )
+    return _dynamic_power_plot(
+        f"{result.method.upper()} HHT",
+        result.time_seconds,
+        frequencies,
+        power,
+        title_suffix="Hilbert energy spectrum",
+        colorbar_label="Hilbert energy [dB]",
+        frequency_scale=frequency_scale,
+        vmin_db=None,
+        vmax_db=None,
+        dynamic_range_db=dynamic_range_db,
+        ax=ax,
+        show=show,
+        controller_attribute="_signal_processing_prep_hht_dynamic_range",
+    )
+
+
 def _dynamic_power_plot(
-    record: SignalRecord,
+    display_name: str,
     times_seconds: np.ndarray,
     frequencies: np.ndarray,
     power: np.ndarray,
@@ -283,7 +443,7 @@ def _dynamic_power_plot(
         times_seconds, frequencies, power_db, shading="auto", vmin=initial_vmin, vmax=initial_vmax
     )
     colorbar = _configure_time_frequency_axes(
-        fig, ax, mesh, record, frequency_scale, colorbar_label, title_suffix
+        fig, ax, mesh, display_name, frequency_scale, colorbar_label, title_suffix
     )
     slider_min, slider_max = _spectrogram_slider_bounds(power_db, initial_vmin, initial_vmax)
     separation = max((slider_max - slider_min) * 1e-6, 1e-6)
@@ -302,12 +462,12 @@ def _configure_time_frequency_axes(
     fig: Figure,
     ax: Axes,
     mesh: object,
-    record: SignalRecord,
+    display_name: str,
     frequency_scale: str,
     colorbar_label: str,
     title_suffix: str,
 ) -> object:
-    ax.set_title(f"{record.name or 'Signal'} - {title_suffix}")
+    ax.set_title(f"{display_name} - {title_suffix}")
     ax.set_xlabel("Time [s]")
     ax.set_ylabel("Frequency [Hz]")
     ax.set_yscale(frequency_scale)
@@ -333,6 +493,22 @@ def _windowed_spectrum(
         return spectrum.frequencies_hz, spectrum.magnitudes, "Magnitude"
     power_spectrum = psd(values, sampling_rate_hz=record.sampling_rate_hz, nperseg=nperseg)
     return power_spectrum.frequencies_hz, power_spectrum.power, "PSD [amplitude^2 / Hz]"
+
+
+def _analysis_window_mask(
+    record: SignalRecord,
+    time_seconds: np.ndarray,
+    *,
+    start_seconds: float | None,
+    duration_seconds: float | None,
+) -> np.ndarray:
+    selected_time, _ = windowed_data(
+        record,
+        start_seconds=start_seconds,
+        duration_seconds=duration_seconds,
+        max_points=None,
+    )
+    return (time_seconds >= selected_time[0]) & (time_seconds <= selected_time[-1])
 
 
 def _validate_spectrum_type(spectrum_type: str) -> str:

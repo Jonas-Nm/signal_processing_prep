@@ -15,15 +15,21 @@ from signal_processing_prep.plotting import (
     plot_feature_importance,
     plot_frequency_spectra,
     plot_frequency_spectrum,
+    plot_hilbert_huang_imfs,
+    plot_hilbert_huang_spectrum,
     plot_spectrogram,
     plot_spectrogram_dynamic_range,
+    plot_teager_kaiser_energy,
+    plot_teager_kaiser_frequency,
     plot_time_signal,
     plot_time_signal_adaptive,
     plot_time_signal_navigator,
     plot_wavelet_scalogram,
     save_figure,
 )
+from signal_processing_prep.records import SignalRecord
 from signal_processing_prep.synthetic import sine_wave
+from signal_processing_prep.time_frequency import hilbert_huang_transform
 
 
 def test_plot_time_signal_returns_labeled_figure() -> None:
@@ -357,6 +363,97 @@ def test_plot_spectrogram_dynamic_range_rejects_invalid_arguments() -> None:
 
     with pytest.raises(ValueError, match="frequency_scale"):
         plot_spectrogram_dynamic_range(record, frequency_scale="symlog")
+
+
+def test_plot_teager_kaiser_energy_returns_labeled_windowed_figure() -> None:
+    """TKEO energy plots retain labels and apply requested display windows."""
+    record = sine_wave(
+        frequency_hz=20.0,
+        duration_seconds=2.0,
+        sampling_rate_hz=200.0,
+        name="tone",
+    )
+
+    fig, ax = plot_teager_kaiser_energy(record, start_seconds=0.5, duration_seconds=0.25)
+    x_data = ax.lines[0].get_xdata()
+
+    assert ax.get_xlabel() == "Time [s]"
+    assert ax.get_ylabel() == "TKEO energy [amplitude^2]"
+    assert "Teager-Kaiser energy" in ax.get_title()
+    assert x_data[0] >= 0.5
+    assert x_data[-1] < 0.75
+    plt.close(fig)
+
+
+def test_plot_teager_kaiser_frequency_draws_only_valid_estimates() -> None:
+    """TKEO frequency plots break trajectories over invalid inactive intervals."""
+    sampling_rate_hz = 200.0
+    time = np.arange(200, dtype=np.float64) / sampling_rate_hz
+    values = np.zeros_like(time)
+    values[20:60] = np.sin(2.0 * np.pi * 20.0 * time[20:60])
+    values[140:180] = np.sin(2.0 * np.pi * 20.0 * time[140:180])
+    record = SignalRecord(values, sampling_rate_hz, name="gated_tone")
+
+    fig, ax = plot_teager_kaiser_frequency(record)
+    x_data = ax.lines[0].get_xdata()
+    y_data = ax.lines[0].get_ydata()
+    gap = (x_data > 0.35) & (x_data < 0.65)
+
+    assert ax.get_ylabel() == "Instantaneous frequency [Hz]"
+    assert "instantaneous frequency" in ax.get_title()
+    assert len(x_data) == record.n_samples - 4
+    assert np.isfinite(y_data).any()
+    assert np.all(np.isnan(y_data[gap]))
+    plt.close(fig)
+
+
+def test_plot_hilbert_huang_imfs_includes_residual_panel() -> None:
+    """HHT decomposition plots visualize existing IMFs and their residual."""
+    result = hilbert_huang_transform(
+        sine_wave(frequency_hz=20.0, duration_seconds=1.0, sampling_rate_hz=200.0),
+        max_imfs=2,
+    )
+
+    fig, axes = plot_hilbert_huang_imfs(result, max_imfs=1)
+
+    assert len(axes) == 2
+    assert axes[0].get_ylabel() == "IMF 1"
+    assert axes[-1].get_ylabel() == "Residual"
+    assert axes[-1].get_xlabel() == "Time [s]"
+    plt.close(fig)
+
+
+def test_plot_hilbert_huang_spectrum_returns_dynamic_time_frequency_figure() -> None:
+    """Hilbert spectrum plots consume an HHT result with labeled axes and sliders."""
+    result = hilbert_huang_transform(
+        sine_wave(frequency_hz=20.0, duration_seconds=1.0, sampling_rate_hz=200.0),
+        n_frequency_bins=32,
+    )
+
+    fig, ax = plot_hilbert_huang_spectrum(result)
+
+    assert ax.get_xlabel() == "Time [s]"
+    assert ax.get_ylabel() == "Frequency [Hz]"
+    assert "Hilbert energy spectrum" in ax.get_title()
+    assert hasattr(ax, "_signal_processing_prep_hht_dynamic_range")
+    assert len(fig.axes) == 4
+    plt.close(fig)
+
+
+def test_plot_hilbert_huang_helpers_validate_display_arguments() -> None:
+    """HHT plots reject invalid panel and spectral display settings."""
+    result = hilbert_huang_transform(
+        sine_wave(frequency_hz=20.0, duration_seconds=1.0, sampling_rate_hz=200.0)
+    )
+
+    with pytest.raises(ValueError, match="max_imfs"):
+        plot_hilbert_huang_imfs(result, max_imfs=0)
+
+    with pytest.raises(ValueError, match="dynamic_range_db"):
+        plot_hilbert_huang_spectrum(result, dynamic_range_db=0.0)
+
+    with pytest.raises(ValueError, match="frequency_scale"):
+        plot_hilbert_huang_spectrum(result, frequency_scale="symlog")
 
 
 def test_plot_wavelet_scalogram_returns_labeled_log_figure() -> None:
