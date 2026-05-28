@@ -22,7 +22,7 @@ from signal_processing_prep.frequency_domain import (
     spectral_rolloff,
 )
 from signal_processing_prep.records import SignalRecord
-from signal_processing_prep.time_frequency import spectrogram_analysis
+from signal_processing_prep.time_frequency import spectral_kurtosis, spectrogram_analysis
 from signal_processing_prep.time_domain import (
     crest_factor,
     kurtosis,
@@ -42,7 +42,12 @@ class FrequencyBand:
 
     def __post_init__(self) -> None:
         """Validate a named band once at construction."""
-        if self.low_hz < 0 or self.high_hz <= self.low_hz:
+        if (
+            not np.isfinite(self.low_hz)
+            or not np.isfinite(self.high_hz)
+            or self.low_hz < 0
+            or self.high_hz <= self.low_hz
+        ):
             raise ConfigurationError(f"Invalid frequency band '{self.name}'.")
 
 
@@ -54,6 +59,9 @@ class FeatureExtractionConfig:
     spectrogram_window_seconds: float = 0.1
     spectrogram_step_seconds: float | None = None
     high_frequency_cutoff_hz: float | None = None
+    spectral_kurtosis_window_seconds: float | None = None
+    spectral_kurtosis_step_seconds: float | None = None
+    spectral_kurtosis_peak_band: FrequencyBand | None = None
 
     def __post_init__(self) -> None:
         """Validate record-feature extraction policy once."""
@@ -63,6 +71,37 @@ class FeatureExtractionConfig:
             raise ConfigurationError("spectrogram_step_seconds must be positive.")
         if self.high_frequency_cutoff_hz is not None and self.high_frequency_cutoff_hz < 0:
             raise ConfigurationError("high_frequency_cutoff_hz must be non-negative.")
+        if self.spectral_kurtosis_window_seconds is None:
+            if self.spectral_kurtosis_step_seconds is not None:
+                raise ConfigurationError(
+                    "spectral_kurtosis_step_seconds requires spectral_kurtosis_window_seconds."
+                )
+            if self.spectral_kurtosis_peak_band is not None:
+                raise ConfigurationError(
+                    "spectral_kurtosis_peak_band requires spectral_kurtosis_window_seconds."
+                )
+        elif (
+            not np.isfinite(self.spectral_kurtosis_window_seconds)
+            or self.spectral_kurtosis_window_seconds <= 0
+        ):
+            raise ConfigurationError("spectral_kurtosis_window_seconds must be positive and finite.")
+        if (
+            self.spectral_kurtosis_step_seconds is not None
+            and (
+                not np.isfinite(self.spectral_kurtosis_step_seconds)
+                or self.spectral_kurtosis_step_seconds <= 0
+            )
+        ):
+            raise ConfigurationError("spectral_kurtosis_step_seconds must be positive and finite.")
+        if (
+            self.spectral_kurtosis_window_seconds is not None
+            and self.spectral_kurtosis_step_seconds is not None
+            and self.spectral_kurtosis_step_seconds > self.spectral_kurtosis_window_seconds
+        ):
+            raise ConfigurationError(
+                "spectral_kurtosis_step_seconds must not exceed "
+                "spectral_kurtosis_window_seconds."
+            )
 
 
 @dataclass(frozen=True)
@@ -227,6 +266,7 @@ def _record_features(
     )
     row["spectral_entropy"] = _spectral_entropy(record)
     row.update(_time_frequency_features(record, config))
+    row.update(_spectral_kurtosis_features(record, config))
     return row
 
 
@@ -337,6 +377,53 @@ def _time_frequency_features(
         "mean_spectrogram_energy": float(np.mean(power)),
         "max_spectrogram_energy": float(np.max(power)),
         "high_frequency_transient_energy": high_frequency_energy,
+    }
+
+
+def _spectral_kurtosis_features(
+    record: SignalRecord,
+    config: FeatureExtractionConfig,
+) -> dict[str, float]:
+    window_seconds = config.spectral_kurtosis_window_seconds
+    if window_seconds is None:
+        return {}
+    band = config.spectral_kurtosis_peak_band
+    min_frequency_hz = 0.0 if band is None else band.low_hz
+    max_frequency_hz = record.sampling_rate_hz / 2.0 if band is None else min(
+        band.high_hz,
+        record.sampling_rate_hz / 2.0,
+    )
+    if min_frequency_hz >= max_frequency_hz:
+        return {
+            "spectral_kurtosis_max_excess": float("nan"),
+            "spectral_kurtosis_peak_frequency_hz": float("nan"),
+        }
+    step_seconds = config.spectral_kurtosis_step_seconds or window_seconds
+    window_samples = _seconds_to_sample_count(
+        window_seconds,
+        record.sampling_rate_hz,
+        field_name="spectral_kurtosis_window_seconds",
+    )
+    step_samples = _seconds_to_sample_count(
+        step_seconds,
+        record.sampling_rate_hz,
+        field_name="spectral_kurtosis_step_seconds",
+    )
+    if record.n_samples < window_samples + step_samples:
+        return {
+            "spectral_kurtosis_max_excess": float("nan"),
+            "spectral_kurtosis_peak_frequency_hz": float("nan"),
+        }
+    result = spectral_kurtosis(
+        record,
+        window_seconds=window_seconds,
+        step_seconds=step_seconds,
+        min_frequency_hz=min_frequency_hz,
+        max_frequency_hz=max_frequency_hz,
+    )
+    return {
+        "spectral_kurtosis_max_excess": result.peak_excess_kurtosis,
+        "spectral_kurtosis_peak_frequency_hz": result.peak_frequency_hz,
     }
 
 

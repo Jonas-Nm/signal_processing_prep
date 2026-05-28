@@ -8,6 +8,7 @@ from signal_processing_prep.synthetic import (
     chirp_signal,
     clipped_signal,
     convolve_signals,
+    damped_resonant_impact_train,
     impulse_train,
     make_synthetic_dataset,
     multiply_signals,
@@ -96,6 +97,81 @@ def test_transient_burst_is_active_only_in_window() -> None:
 
     assert np.any(np.abs(record.values[inside]) > 0.0)
     assert np.all(record.values[outside] == 0.0)
+
+
+def test_damped_resonant_impact_train_is_repeatable_and_records_known_impacts() -> None:
+    """A seeded bearing-like record exposes its controlled impact truth."""
+    first = damped_resonant_impact_train(
+        duration_seconds=1.0,
+        sampling_rate_hz=4000.0,
+        impact_rate_hz=4.0,
+        first_impact_seconds=0.1,
+        resonance_frequency_hz=900.0,
+        noise_std=0.02,
+        seed=7,
+    )
+    second = damped_resonant_impact_train(
+        duration_seconds=1.0,
+        sampling_rate_hz=4000.0,
+        impact_rate_hz=4.0,
+        first_impact_seconds=0.1,
+        resonance_frequency_hz=900.0,
+        noise_std=0.02,
+        seed=7,
+    )
+
+    np.testing.assert_allclose(first.values, second.values)
+    assert first.n_samples == 4000
+    assert first.attributes["impact_times_seconds"] == pytest.approx((0.1, 0.35, 0.6, 0.85))
+    assert first.attributes["resonance_frequency_hz"] == 900.0
+
+
+def test_damped_resonant_impact_train_decays_after_each_impact() -> None:
+    """The controlled ring-down is strongest at onset and then decays."""
+    record = damped_resonant_impact_train(
+        duration_seconds=0.6,
+        sampling_rate_hz=10000.0,
+        impact_rate_hz=2.0,
+        first_impact_seconds=0.1,
+        resonance_frequency_hz=2000.0,
+        ringdown_duration_seconds=0.04,
+        decay_time_constant_seconds=0.006,
+        background_frequency_hz=None,
+        background_amplitude=0.0,
+        noise_std=0.0,
+    )
+    onset = int(round(0.1 * record.sampling_rate_hz))
+    early_energy = np.mean(np.square(record.values[onset : onset + 40]))
+    late_energy = np.mean(np.square(record.values[onset + 250 : onset + 350]))
+
+    assert early_energy > 20.0 * late_energy
+    assert np.all(record.values[onset + 400 :] == 0.0)
+
+
+def test_damped_resonant_impact_train_rejects_invalid_parameters() -> None:
+    """Invalid impact and ring-down settings fail clearly."""
+    with pytest.raises(ValueError, match="duration_seconds"):
+        damped_resonant_impact_train(duration_seconds=np.inf)
+    with pytest.raises(ValueError, match="sampling_rate_hz"):
+        damped_resonant_impact_train(sampling_rate_hz=np.nan)
+    with pytest.raises(ValueError, match="sampling_rate_hz"):
+        damped_resonant_impact_train(sampling_rate_hz=0.0)
+    with pytest.raises(ValueError, match="sampling_rate_hz"):
+        damped_resonant_impact_train(sampling_rate_hz=-1.0)
+    with pytest.raises(ValueError, match="impact_rate_hz"):
+        damped_resonant_impact_train(impact_rate_hz=0.0)
+    with pytest.raises(ValueError, match="first_impact_seconds"):
+        damped_resonant_impact_train(first_impact_seconds=-0.1)
+    with pytest.raises(ValueError, match="first_impact_seconds"):
+        damped_resonant_impact_train(duration_seconds=1.0, first_impact_seconds=1.0)
+    with pytest.raises(ValueError, match="resonance_frequency_hz"):
+        damped_resonant_impact_train(sampling_rate_hz=1000.0, resonance_frequency_hz=500.0)
+    with pytest.raises(ValueError, match="ringdown_duration_seconds"):
+        damped_resonant_impact_train(ringdown_duration_seconds=0.0)
+    with pytest.raises(ValueError, match="decay_time_constant_seconds"):
+        damped_resonant_impact_train(decay_time_constant_seconds=0.0)
+    with pytest.raises(ValueError, match="noise_std"):
+        damped_resonant_impact_train(noise_std=-0.1)
 
 
 def test_window_signal_generates_rectangular_and_smooth_windows() -> None:

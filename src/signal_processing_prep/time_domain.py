@@ -6,6 +6,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy import stats
 
+from signal_processing_prep._validation import validate_finite_signal_values
 from signal_processing_prep.records import SignalRecord
 
 
@@ -16,6 +17,7 @@ def _values_from_signal(signal: SignalRecord | ArrayLike) -> NDArray[np.float64]
         raise ValueError("Signal values must be one-dimensional.")
     if values.size == 0:
         raise ValueError("Signal values must not be empty.")
+    validate_finite_signal_values(values)
     return values
 
 
@@ -52,8 +54,10 @@ def zero_crossing_rate(
 
     if isinstance(signal, SignalRecord):
         sampling_rate_hz = signal.sampling_rate_hz
-    if sampling_rate_hz is not None and sampling_rate_hz <= 0:
-        raise ValueError("sampling_rate_hz must be positive.")
+    if sampling_rate_hz is not None and (
+        not np.isfinite(sampling_rate_hz) or sampling_rate_hz <= 0
+    ):
+        raise ValueError("sampling_rate_hz must be positive and finite.")
 
     nonzero_values = values[values != 0.0]
     if nonzero_values.size < 2:

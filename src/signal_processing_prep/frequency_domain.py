@@ -45,8 +45,8 @@ def _values_and_sampling_rate(
     )
     if resolved_sampling_rate is None:
         raise ValueError("sampling_rate_hz is required for raw signal arrays.")
-    if resolved_sampling_rate <= 0:
-        raise ValueError("sampling_rate_hz must be positive.")
+    if not np.isfinite(resolved_sampling_rate) or resolved_sampling_rate <= 0:
+        raise ValueError("sampling_rate_hz must be positive and finite.")
     return values, float(resolved_sampling_rate)
 
 
@@ -172,6 +172,8 @@ def spectral_flatness(
     if epsilon <= 0:
         raise ValueError("epsilon must be positive.")
     _, weights = _spectral_weights(signal, sampling_rate_hz=sampling_rate_hz)
+    if not np.any(weights > 0.0):
+        return 0.0
     positive_weights = np.maximum(weights, epsilon)
     arithmetic_mean = float(np.mean(positive_weights))
     if arithmetic_mean == 0.0:
@@ -196,6 +198,8 @@ def band_energy(
     bands do not double count shared boundary bins. The Nyquist bin is included
     when ``high_hz`` is exactly the Nyquist frequency.
     """
+    if not np.isfinite(low_hz) or not np.isfinite(high_hz):
+        raise ValueError("Band limits must be finite.")
     if low_hz < 0:
         raise ValueError("low_hz must be non-negative.")
     if high_hz <= low_hz:

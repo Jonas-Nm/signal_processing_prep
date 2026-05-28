@@ -74,6 +74,12 @@ def test_band_energy_rejects_invalid_frequency_bands() -> None:
     """Band energy validates band boundaries against the Nyquist frequency."""
     record = sine_wave(sampling_rate_hz=1000.0)
 
+    with pytest.raises(ValueError, match="Band limits must be finite"):
+        band_energy(record, low_hz=np.nan, high_hz=10.0)
+
+    with pytest.raises(ValueError, match="Band limits must be finite"):
+        band_energy(record, low_hz=10.0, high_hz=np.inf)
+
     with pytest.raises(ValueError, match="low_hz must be non-negative"):
         band_energy(record, low_hz=-1.0, high_hz=10.0)
 
@@ -112,6 +118,21 @@ def test_frequency_helpers_reject_nonfinite_samples_before_dsp() -> None:
         band_energy(record, low_hz=1.0, high_hz=2.0)
 
 
+@pytest.mark.parametrize("sampling_rate_hz", [np.nan, np.inf])
+def test_frequency_helpers_reject_nonfinite_sampling_rates(sampling_rate_hz: float) -> None:
+    """Frequency axes and bands require finite timing."""
+    values = np.ones(16)
+
+    with pytest.raises(ValueError, match="sampling_rate_hz must be positive and finite"):
+        fft_magnitude(values, sampling_rate_hz=sampling_rate_hz)
+
+    with pytest.raises(ValueError, match="sampling_rate_hz must be positive and finite"):
+        psd(values, sampling_rate_hz=sampling_rate_hz)
+
+    with pytest.raises(ValueError, match="sampling_rate_hz must be positive and finite"):
+        band_energy(values, low_hz=1.0, high_hz=2.0, sampling_rate_hz=sampling_rate_hz)
+
+
 def test_frequency_helpers_handle_tiny_signals() -> None:
     """Tiny but valid records return finite, interpretable spectral outputs."""
     record = sine_wave(
@@ -128,6 +149,12 @@ def test_frequency_helpers_handle_tiny_signals() -> None:
     assert spectral_bandwidth(spectrum) == 0.0
     assert spectral_rolloff(spectrum) == 0.0
     assert np.isfinite(spectral_flatness(spectrum))
+
+
+def test_spectral_flatness_is_zero_for_zero_energy_spectra() -> None:
+    """Silent or mean-removed constant signals do not look spectrally flat."""
+    assert spectral_flatness(np.zeros(16), sampling_rate_hz=1000.0) == 0.0
+    assert spectral_flatness(np.ones(16), sampling_rate_hz=1000.0) == 0.0
 
 
 def test_spectral_descriptors_are_interpretable_for_tone_and_noise() -> None:

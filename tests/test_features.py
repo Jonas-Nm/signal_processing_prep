@@ -100,6 +100,53 @@ def test_extract_features_includes_expected_phase_five_columns() -> None:
     assert features.loc[0, "band_energy_tone"] > 1.5
 
 
+def test_extract_features_adds_spectral_kurtosis_summaries_only_when_enabled() -> None:
+    """Record-level spectral-kurtosis evidence is opt-in and frequency localized."""
+    sampling_rate_hz = 2000.0
+    times = np.arange(8000, dtype=np.float64) / sampling_rate_hz
+    values = 0.05 * np.random.default_rng(8).standard_normal(times.size)
+    active = (times >= 1.8) & (times < 2.2)
+    values[active] += 2.0 * np.sin(2.0 * np.pi * 320.0 * times[active])
+    record = SignalRecord(values=values, sampling_rate_hz=sampling_rate_hz, name="burst")
+
+    default_features = _features([record])
+    enabled_features = _features(
+        [record],
+        FeatureExtractionConfig(
+            spectral_kurtosis_window_seconds=0.05,
+            spectral_kurtosis_peak_band=FrequencyBand("candidate", 100.0, 600.0),
+        ),
+    )
+
+    assert "spectral_kurtosis_max_excess" not in default_features.columns
+    assert enabled_features.loc[0, "spectral_kurtosis_max_excess"] > 5.0
+    assert enabled_features.loc[0, "spectral_kurtosis_peak_frequency_hz"] == pytest.approx(
+        320.0, abs=20.0
+    )
+
+
+def test_extract_features_reports_nan_for_unsupported_spectral_kurtosis_summary() -> None:
+    """Opt-in spectral kurtosis remains tabular when a short record has too few frames."""
+    features = _features(
+        [sine_wave(duration_seconds=0.1, sampling_rate_hz=1000.0)],
+        FeatureExtractionConfig(spectral_kurtosis_window_seconds=0.1),
+    )
+
+    assert np.isnan(features.loc[0, "spectral_kurtosis_max_excess"])
+    assert np.isnan(features.loc[0, "spectral_kurtosis_peak_frequency_hz"])
+
+
+def test_extract_features_uses_sample_rounded_spectral_kurtosis_frame_support() -> None:
+    """Very short opt-in inputs return NaN when rounded frames cannot form an estimate."""
+    features = _features(
+        [SignalRecord(values=np.array([1.0]), sampling_rate_hz=10.0, name="one_sample")],
+        FeatureExtractionConfig(spectral_kurtosis_window_seconds=0.049),
+    )
+
+    assert np.isnan(features.loc[0, "spectral_kurtosis_max_excess"])
+    assert np.isnan(features.loc[0, "spectral_kurtosis_peak_frequency_hz"])
+
+
 def test_extract_features_preserves_missing_labels_for_small_dataset() -> None:
     """Small unlabeled datasets are handled without special casing."""
     record = SignalRecord(values=np.ones(16), sampling_rate_hz=16.0, name="constant")
@@ -178,6 +225,33 @@ def test_extract_features_rejects_invalid_config() -> None:
             FeatureExtractionConfig(frequency_bands=(FrequencyBand("bad", 10.0, 10.0),)),
         )
 
+    with pytest.raises(ValueError, match="spectral_kurtosis_step_seconds requires"):
+        FeatureExtractionConfig(spectral_kurtosis_step_seconds=0.1)
+
+    with pytest.raises(ValueError, match="spectral_kurtosis_peak_band requires"):
+        FeatureExtractionConfig(spectral_kurtosis_peak_band=FrequencyBand("candidate", 1.0, 2.0))
+
+    with pytest.raises(ValueError, match="spectral_kurtosis_window_seconds must be positive"):
+        FeatureExtractionConfig(spectral_kurtosis_window_seconds=0.0)
+
+    with pytest.raises(ValueError, match="spectral_kurtosis_window_seconds must be positive"):
+        FeatureExtractionConfig(spectral_kurtosis_window_seconds=np.nan)
+
+    with pytest.raises(ValueError, match="spectral_kurtosis_step_seconds must be positive"):
+        FeatureExtractionConfig(
+            spectral_kurtosis_window_seconds=0.1,
+            spectral_kurtosis_step_seconds=np.inf,
+        )
+
+    with pytest.raises(ValueError, match="spectral_kurtosis_step_seconds must not exceed"):
+        FeatureExtractionConfig(
+            spectral_kurtosis_window_seconds=0.1,
+            spectral_kurtosis_step_seconds=0.2,
+        )
+
+    with pytest.raises(ValueError, match="Invalid frequency band 'nan'"):
+        FrequencyBand("nan", np.nan, 2.0)
+
 
 def test_extract_features_reports_nan_when_valid_step_exceeds_short_record_window() -> None:
     """Valid global spectrogram settings remain usable for very short records."""
@@ -227,6 +301,7 @@ def test_sliding_window_features_returns_one_row_per_window() -> None:
     assert "skewness" in features.columns
     assert "dominant_frequency_hz" in features.columns
     assert "band_energy_tone_band" in features.columns
+    assert "spectral_kurtosis_max_excess" not in features.columns
     assert features["frequency_window"].tolist() == ["hann"] * 7
     assert np.allclose(features["rms"], np.sqrt(2.0), rtol=1e-3)
     assert np.allclose(features["dominant_frequency_hz"], 10.0)

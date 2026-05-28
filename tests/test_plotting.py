@@ -17,6 +17,7 @@ from signal_processing_prep.plotting import (
     plot_frequency_spectrum,
     plot_hilbert_huang_imfs,
     plot_hilbert_huang_spectrum,
+    plot_spectral_kurtosis,
     plot_spectrogram,
     plot_spectrogram_dynamic_range,
     plot_teager_kaiser_energy,
@@ -29,7 +30,7 @@ from signal_processing_prep.plotting import (
 )
 from signal_processing_prep.records import SignalRecord
 from signal_processing_prep.synthetic import sine_wave
-from signal_processing_prep.time_frequency import hilbert_huang_transform
+from signal_processing_prep.time_frequency import hilbert_huang_transform, spectral_kurtosis
 
 
 def test_plot_time_signal_returns_labeled_figure() -> None:
@@ -363,6 +364,34 @@ def test_plot_spectrogram_dynamic_range_rejects_invalid_arguments() -> None:
 
     with pytest.raises(ValueError, match="frequency_scale"):
         plot_spectrogram_dynamic_range(record, frequency_scale="symlog")
+
+
+def test_plot_spectral_kurtosis_marks_peak_and_stationary_baseline() -> None:
+    """Spectral-kurtosis plotting consumes the calculated curve and highlights its peak."""
+    sampling_rate_hz = 1000.0
+    times = np.arange(4000, dtype=np.float64) / sampling_rate_hz
+    values = 0.02 * np.random.default_rng(3).standard_normal(times.size)
+    active = (times >= 1.0) & (times < 1.4)
+    values[active] += np.sin(2.0 * np.pi * 180.0 * times[active])
+    result = spectral_kurtosis(
+        values,
+        sampling_rate_hz=sampling_rate_hz,
+        window_seconds=0.05,
+        min_frequency_hz=80.0,
+        max_frequency_hz=300.0,
+    )
+
+    fig, ax = plot_spectral_kurtosis(result)
+
+    assert fig is ax.figure
+    assert ax.get_xlabel() == "Frequency [Hz]"
+    assert ax.get_ylabel() == "Excess spectral kurtosis"
+    assert "Spectral kurtosis" in ax.get_title()
+    assert len(ax.lines) == 3
+    assert np.all(ax.lines[0].get_xdata() == result.frequencies_hz[result.valid_mask])
+    assert np.all(np.asarray(ax.lines[1].get_ydata()) == 0.0)
+    assert ax.lines[2].get_xdata()[0] == pytest.approx(result.peak_frequency_hz)
+    plt.close(fig)
 
 
 def test_plot_teager_kaiser_energy_returns_labeled_windowed_figure() -> None:

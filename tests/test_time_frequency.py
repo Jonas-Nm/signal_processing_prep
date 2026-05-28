@@ -4,11 +4,18 @@ import numpy as np
 import pytest
 
 from signal_processing_prep.records import SignalRecord
-from signal_processing_prep.synthetic import chirp_signal, sine_wave, transient_burst
+from signal_processing_prep.synthetic import (
+    chirp_signal,
+    damped_resonant_impact_train,
+    sine_wave,
+    transient_burst,
+)
 from signal_processing_prep.time_frequency import (
+    discrete_wavelet_analysis,
     hilbert_analysis,
     hilbert_huang_transform,
     morlet_wavelet_scalogram,
+    spectral_kurtosis,
     spectrogram_analysis,
     stft_analysis,
     teager_kaiser_demodulation,
@@ -50,6 +57,109 @@ def test_spectrogram_analysis_localizes_transient_energy() -> None:
 
     assert 0.9 <= peak_time <= 1.2
     assert result.power.shape == (result.frequencies_hz.size, result.times_seconds.size)
+
+
+def test_spectral_kurtosis_is_near_zero_for_stationary_gaussian_noise() -> None:
+    """Stationary random spectral power has little excess kurtosis overall."""
+    rng = np.random.default_rng(8)
+    values = rng.standard_normal(8000)
+
+    result = spectral_kurtosis(
+        values,
+        sampling_rate_hz=2000.0,
+        window_seconds=0.05,
+        min_frequency_hz=20.0,
+        max_frequency_hz=900.0,
+    )
+
+    assert result.n_segments == 80
+    assert np.all(result.valid_mask)
+    assert abs(float(np.median(result.excess_kurtosis))) < 0.15
+
+
+def test_spectral_kurtosis_excludes_real_only_edge_bins_from_valid_peaks() -> None:
+    """DC and Nyquist bins do not use the complex-bin excess correction."""
+    values = np.random.default_rng(2).standard_normal(8000)
+
+    result = spectral_kurtosis(values, sampling_rate_hz=2000.0, window_seconds=0.05)
+
+    assert result.frequencies_hz[0] == 0.0
+    assert result.frequencies_hz[-1] == 1000.0
+    assert not result.valid_mask[0]
+    assert not result.valid_mask[-1]
+    assert np.isnan(result.excess_kurtosis[0])
+    assert np.isnan(result.excess_kurtosis[-1])
+
+
+def test_spectral_kurtosis_finds_intermittent_resonant_band() -> None:
+    """An intermittent carrier creates a strong spectral-kurtosis peak."""
+    sampling_rate_hz = 2000.0
+    times = np.arange(8000, dtype=np.float64) / sampling_rate_hz
+    rng = np.random.default_rng(8)
+    values = 0.05 * rng.standard_normal(times.size)
+    active = (times >= 1.8) & (times < 2.2)
+    values[active] += 2.0 * np.sin(2.0 * np.pi * 320.0 * times[active])
+
+    result = spectral_kurtosis(
+        values,
+        sampling_rate_hz=sampling_rate_hz,
+        window_seconds=0.05,
+        min_frequency_hz=100.0,
+        max_frequency_hz=600.0,
+    )
+    restricted = spectral_kurtosis(
+        values,
+        sampling_rate_hz=sampling_rate_hz,
+        window_seconds=0.05,
+        min_frequency_hz=250.0,
+        max_frequency_hz=390.0,
+    )
+
+    assert result.peak_frequency_hz == pytest.approx(320.0, abs=20.0)
+    assert result.peak_excess_kurtosis > 5.0
+    assert restricted.frequencies_hz[0] >= 250.0
+    assert restricted.frequencies_hz[-1] <= 390.0
+    assert restricted.peak_frequency_hz == pytest.approx(320.0, abs=20.0)
+
+
+def test_spectral_kurtosis_is_invariant_to_finite_signal_scaling() -> None:
+    """Amplitude scaling does not alter this normalized impulsiveness statistic."""
+    sampling_rate_hz = 2000.0
+    times = np.arange(8000, dtype=np.float64) / sampling_rate_hz
+    values = 0.05 * np.random.default_rng(8).standard_normal(times.size)
+    active = (times >= 1.8) & (times < 2.2)
+    values[active] += 2.0 * np.sin(2.0 * np.pi * 320.0 * times[active])
+
+    baseline = spectral_kurtosis(
+        values,
+        sampling_rate_hz=sampling_rate_hz,
+        window_seconds=0.05,
+        min_frequency_hz=100.0,
+        max_frequency_hz=600.0,
+    )
+    for scale in (1e-100, 1e100, 1e155):
+        scaled = spectral_kurtosis(
+            values * scale,
+            sampling_rate_hz=sampling_rate_hz,
+            window_seconds=0.05,
+            min_frequency_hz=100.0,
+            max_frequency_hz=600.0,
+        )
+
+        assert np.array_equal(scaled.valid_mask, baseline.valid_mask)
+        assert scaled.peak_frequency_hz == baseline.peak_frequency_hz
+        assert np.allclose(scaled.excess_kurtosis, baseline.excess_kurtosis, rtol=1e-12, atol=1e-12)
+
+
+def test_spectral_kurtosis_returns_no_peak_for_zero_energy_signal() -> None:
+    """Bins without spectral power are invalid rather than assigned a peak."""
+    result = spectral_kurtosis(np.zeros(200), sampling_rate_hz=100.0, window_seconds=0.5)
+
+    assert result.n_segments == 4
+    assert not np.any(result.valid_mask)
+    assert np.all(np.isnan(result.excess_kurtosis))
+    assert np.isnan(result.peak_frequency_hz)
+    assert np.isnan(result.peak_excess_kurtosis)
 
 
 def test_hilbert_analysis_returns_envelope_and_instantaneous_frequency() -> None:
@@ -262,6 +372,63 @@ def test_morlet_wavelet_scalogram_returns_frequency_time_power_grid() -> None:
     assert result.frequencies_hz[int(np.argmax(mean_power))] == pytest.approx(40.0)
 
 
+def test_discrete_wavelet_analysis_returns_sample_aligned_dyadic_details() -> None:
+    """DWT exposes reconstructed details and approximate descending subbands."""
+    record = sine_wave(frequency_hz=40.0, duration_seconds=1.0, sampling_rate_hz=512.0)
+
+    result = discrete_wavelet_analysis(record, level=3)
+
+    assert result.wavelet == "db4"
+    assert result.detail_levels == (1, 2, 3)
+    assert result.detail_reconstructions.shape == (3, record.n_samples)
+    assert result.detail_energy.shape == result.detail_reconstructions.shape
+    assert all(np.isfinite(component).all() for component in result.detail_coefficients)
+    np.testing.assert_allclose(
+        result.approximate_frequency_bands_hz,
+        ((128.0, 256.0), (64.0, 128.0), (32.0, 64.0)),
+    )
+    assert int(np.argmax(np.sum(result.detail_energy, axis=1))) == 2
+
+
+def test_discrete_wavelet_detail_energy_localizes_damped_impacts() -> None:
+    """High-frequency DWT details emphasize controlled resonant impacts."""
+    record = damped_resonant_impact_train(
+        duration_seconds=1.0,
+        sampling_rate_hz=4096.0,
+        impact_rate_hz=4.0,
+        first_impact_seconds=0.1,
+        resonance_frequency_hz=1200.0,
+        ringdown_duration_seconds=0.025,
+        decay_time_constant_seconds=0.004,
+        background_frequency_hz=32.0,
+        background_amplitude=0.08,
+        noise_std=0.01,
+        seed=3,
+    )
+
+    result = discrete_wavelet_analysis(record, level=4)
+    high_frequency_score = np.sum(result.detail_energy[:2], axis=0)
+    impact_index = int(round(0.1 * record.sampling_rate_hz))
+    impact_energy = np.max(high_frequency_score[impact_index : impact_index + 100])
+    background_energy = np.max(high_frequency_score[800:1000])
+
+    assert impact_energy > 20.0 * background_energy
+
+
+def test_discrete_wavelet_analysis_rejects_invalid_configuration() -> None:
+    """Invalid DWT basis or level fails clearly."""
+    record = sine_wave(duration_seconds=1.0, sampling_rate_hz=100.0)
+
+    with pytest.raises(ValueError, match="Invalid discrete wavelet"):
+        discrete_wavelet_analysis(record, wavelet="unknown_basis")
+
+    with pytest.raises(ValueError, match="level"):
+        discrete_wavelet_analysis(record, level=0)
+
+    with pytest.raises(ValueError, match="level"):
+        discrete_wavelet_analysis(record, wavelet="db4", level=100)
+
+
 def test_time_frequency_helpers_reject_invalid_window_arguments() -> None:
     """Invalid time-frequency configuration fails clearly."""
     record = sine_wave(duration_seconds=1.0, sampling_rate_hz=100.0)
@@ -272,12 +439,36 @@ def test_time_frequency_helpers_reject_invalid_window_arguments() -> None:
     with pytest.raises(ValueError, match="step_seconds must not exceed"):
         spectrogram_analysis(record, window_seconds=0.1, step_seconds=0.2)
 
+    with pytest.raises(ValueError, match="at least 2 complete"):
+        spectral_kurtosis(record, window_seconds=1.0)
+
+    with pytest.raises(ValueError, match="min_frequency_hz"):
+        spectral_kurtosis(record, window_seconds=0.2, min_frequency_hz=-1.0)
+
+    with pytest.raises(ValueError, match="max_frequency_hz"):
+        spectral_kurtosis(record, window_seconds=0.2, min_frequency_hz=40.0, max_frequency_hz=30.0)
+
+    with pytest.raises(ValueError, match="Nyquist"):
+        spectral_kurtosis(record, window_seconds=0.2, max_frequency_hz=60.0)
+
+    with pytest.raises(ValueError, match="window_seconds"):
+        spectral_kurtosis(record, window_seconds=np.nan)
+
+    with pytest.raises(ValueError, match="window_seconds"):
+        spectral_kurtosis(record, window_seconds=np.inf)
+
+    with pytest.raises(ValueError, match="step_seconds"):
+        spectral_kurtosis(record, window_seconds=0.2, step_seconds=np.inf)
+
     low_rate_record = sine_wave(duration_seconds=1.0, sampling_rate_hz=10.0)
     with pytest.raises(ValueError, match="step_seconds must not exceed"):
         spectrogram_analysis(low_rate_record, window_seconds=0.04, step_seconds=0.05)
 
     with pytest.raises(ValueError, match="Nyquist"):
         morlet_wavelet_scalogram(record, frequencies_hz=[60.0])
+
+    with pytest.raises(ValueError, match="too short"):
+        discrete_wavelet_analysis(np.ones(4), sampling_rate_hz=100.0, wavelet="db4")
 
     with pytest.raises(ValueError, match="method"):
         hilbert_huang_transform(record, method="unknown")
@@ -327,6 +518,15 @@ def test_raw_teager_kaiser_helpers_require_sampling_rate() -> None:
     with pytest.raises(ValueError, match="sampling_rate_hz is required"):
         hilbert_huang_transform(np.ones(5))
 
+    with pytest.raises(ValueError, match="sampling_rate_hz is required"):
+        spectral_kurtosis(np.ones(20), window_seconds=0.1)
+
+    with pytest.raises(ValueError, match="sampling_rate_hz is required"):
+        discrete_wavelet_analysis(np.ones(20))
+
+    with pytest.raises(ValueError, match="sampling_rate_hz"):
+        spectral_kurtosis(np.ones(20), sampling_rate_hz=np.inf, window_seconds=0.1)
+
 
 def test_time_frequency_helpers_reject_nonfinite_samples_before_dsp() -> None:
     """Time-frequency helpers fail clearly for NaN or Inf samples."""
@@ -352,6 +552,12 @@ def test_time_frequency_helpers_reject_nonfinite_samples_before_dsp() -> None:
 
     with pytest.raises(ValueError, match="non-finite samples"):
         hilbert_huang_transform(record)
+
+    with pytest.raises(ValueError, match="non-finite samples"):
+        spectral_kurtosis(record, window_seconds=0.2)
+
+    with pytest.raises(ValueError, match="non-finite samples"):
+        discrete_wavelet_analysis(record, wavelet="db1")
 
 
 def test_energy_based_helpers_reject_nonfinite_computed_outputs() -> None:

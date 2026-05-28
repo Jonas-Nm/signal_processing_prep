@@ -34,6 +34,18 @@ class SpectrogramResult:
 
 
 @dataclass(frozen=True)
+class SpectralKurtosisResult:
+    """Frequency-wise excess spectral kurtosis computed across STFT segments."""
+
+    frequencies_hz: NDArray[np.float64]
+    excess_kurtosis: NDArray[np.float64]
+    valid_mask: NDArray[np.bool_]
+    n_segments: int
+    peak_frequency_hz: float
+    peak_excess_kurtosis: float
+
+
+@dataclass(frozen=True)
 class HilbertResult:
     """Analytic-signal features from the Hilbert transform."""
 
@@ -88,6 +100,24 @@ class WaveletScalogram:
     power: NDArray[np.float64]
     widths: NDArray[np.float64]
     wavelet: str
+
+
+@dataclass(frozen=True)
+class DiscreteWaveletResult:
+    """Multilevel discrete-wavelet detail decomposition.
+
+    Approximate frequency bands follow the usual dyadic interpretation of
+    detail levels. They are useful subband labels, not exact spectral bins.
+    """
+
+    time_seconds: NDArray[np.float64]
+    wavelet: str
+    level: int
+    detail_levels: tuple[int, ...]
+    approximate_frequency_bands_hz: tuple[tuple[float, float], ...]
+    detail_coefficients: tuple[NDArray[np.float64], ...]
+    detail_reconstructions: NDArray[np.float64]
+    detail_energy: NDArray[np.float64]
 
 
 def stft_analysis(
@@ -153,6 +183,105 @@ def spectrogram_analysis(
         frequencies_hz=np.asarray(frequencies, dtype=np.float64),
         times_seconds=np.asarray(times, dtype=np.float64),
         power=np.asarray(power, dtype=np.float64),
+    )
+
+
+def spectral_kurtosis(
+    signal: SignalRecord | ArrayLike,
+    *,
+    sampling_rate_hz: float | None = None,
+    window_seconds: float = 0.1,
+    step_seconds: float | None = None,
+    window: str = "hann",
+    min_frequency_hz: float = 0.0,
+    max_frequency_hz: float | None = None,
+) -> SpectralKurtosisResult:
+    """Estimate excess spectral kurtosis for each selected frequency bin.
+
+    The estimate compares short-time spectral powers across frames. By
+    default frames do not overlap, preserving the usual independent-frame
+    interpretation of the statistic. An explicit overlapping ``step_seconds``
+    can smooth exploratory curves, but weakens that interpretation. DC and
+    Nyquist bins are returned but excluded from valid peak selection because
+    their real-valued coefficients do not follow the complex-bin correction.
+    """
+    values, sampling_rate = _values_and_sampling_rate(signal, sampling_rate_hz)
+    if step_seconds is None:
+        step_seconds = window_seconds
+    nperseg, noverlap = _window_and_overlap_samples(
+        window_seconds,
+        step_seconds,
+        sampling_rate,
+        values.size,
+    )
+    n_segments = 1 + (values.size - nperseg) // (nperseg - noverlap)
+    if n_segments < 2:
+        raise ValueError("Spectral kurtosis requires at least 2 complete STFT segments.")
+    nyquist_hz = sampling_rate / 2.0
+    if not np.isfinite(min_frequency_hz) or min_frequency_hz < 0.0:
+        raise ValueError("min_frequency_hz must be finite and non-negative.")
+    if max_frequency_hz is None:
+        max_frequency_hz = nyquist_hz
+    if (
+        not np.isfinite(max_frequency_hz)
+        or max_frequency_hz <= min_frequency_hz
+        or max_frequency_hz > nyquist_hz
+    ):
+        raise ValueError(
+            "max_frequency_hz must be finite, above min_frequency_hz, and not exceed Nyquist."
+        )
+
+    maximum_amplitude = float(np.max(np.abs(values)))
+    normalized_values = values if maximum_amplitude == 0.0 else values / maximum_amplitude
+    frequencies, _, coefficients = scipy_signal.stft(
+        normalized_values,
+        fs=sampling_rate,
+        window=window,
+        nperseg=nperseg,
+        noverlap=noverlap,
+        boundary=None,
+        padded=False,
+    )
+    selected = (frequencies >= min_frequency_hz) & (frequencies <= max_frequency_hz)
+    frequencies = np.asarray(frequencies[selected], dtype=np.float64)
+    with np.errstate(over="ignore", invalid="ignore"):
+        power = np.square(np.abs(coefficients[selected, :]))
+        sum_power = np.sum(power, axis=1)
+        sum_squared_power = np.sum(np.square(power), axis=1)
+    if (
+        not np.isfinite(power).all()
+        or not np.isfinite(sum_power).all()
+        or not np.isfinite(sum_squared_power).all()
+    ):
+        raise ValueError("Spectral kurtosis calculation produced non-finite power values.")
+
+    complex_bin_mask = (frequencies > 0.0) & (frequencies < nyquist_hz)
+    valid_mask = (sum_power > 0.0) & complex_bin_mask
+    excess_kurtosis = np.full(frequencies.shape, np.nan, dtype=np.float64)
+    if np.any(valid_mask):
+        m = float(n_segments)
+        with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+            ratio = sum_squared_power[valid_mask] / np.square(sum_power[valid_mask])
+            excess_kurtosis[valid_mask] = (m / (m - 1.0)) * (
+                (m + 1.0) * ratio - 2.0
+            )
+        if not np.isfinite(excess_kurtosis[valid_mask]).all():
+            raise ValueError("Spectral kurtosis calculation produced non-finite values.")
+
+    if np.any(valid_mask):
+        peak_index = int(np.nanargmax(excess_kurtosis))
+        peak_frequency_hz = float(frequencies[peak_index])
+        peak_excess_kurtosis = float(excess_kurtosis[peak_index])
+    else:
+        peak_frequency_hz = float("nan")
+        peak_excess_kurtosis = float("nan")
+    return SpectralKurtosisResult(
+        frequencies_hz=frequencies,
+        excess_kurtosis=excess_kurtosis,
+        valid_mask=valid_mask,
+        n_segments=n_segments,
+        peak_frequency_hz=peak_frequency_hz,
+        peak_excess_kurtosis=peak_excess_kurtosis,
     )
 
 
@@ -404,6 +533,65 @@ def morlet_wavelet_scalogram(
     )
 
 
+def discrete_wavelet_analysis(
+    signal: SignalRecord | ArrayLike,
+    *,
+    sampling_rate_hz: float | None = None,
+    wavelet: str = "db4",
+    level: int | None = None,
+) -> DiscreteWaveletResult:
+    """Compute sample-aligned DWT detail components for transient analysis.
+
+    Unlike a continuous-wavelet scalogram, this decomposition uses dyadic
+    detail levels. The reconstructed detail energy can therefore provide a
+    compact multiscale transient score, while its frequency bands remain
+    approximate filter subbands rather than precise frequency estimates.
+    """
+    values, sampling_rate = _values_and_sampling_rate(signal, sampling_rate_hz)
+    try:
+        discrete_wavelet = pywt.Wavelet(wavelet)
+    except ValueError as error:
+        raise ValueError(f"Invalid discrete wavelet '{wavelet}'.") from error
+    maximum_level = pywt.dwt_max_level(values.size, discrete_wavelet.dec_len)
+    if maximum_level < 1:
+        raise ValueError("Signal is too short for one DWT detail level with this wavelet.")
+    if level is None:
+        level = min(5, maximum_level)
+    if not isinstance(level, int) or level <= 0 or level > maximum_level:
+        raise ValueError(f"level must be a positive integer not exceeding {maximum_level}.")
+
+    working_values = np.array(values, dtype=np.float64, copy=True)
+    coefficients = pywt.wavedec(working_values, discrete_wavelet, level=level, mode="symmetric")
+    detail_levels = tuple(range(1, level + 1))
+    detail_coefficients: list[NDArray[np.float64]] = []
+    detail_reconstructions: list[NDArray[np.float64]] = []
+    for detail_level in detail_levels:
+        coefficient_index = level - detail_level + 1
+        detail_coefficients.append(np.asarray(coefficients[coefficient_index], dtype=np.float64))
+        selected = [np.zeros_like(coefficient) for coefficient in coefficients]
+        selected[coefficient_index] = coefficients[coefficient_index]
+        reconstruction = pywt.waverec(selected, discrete_wavelet, mode="symmetric")[: values.size]
+        detail_reconstructions.append(np.asarray(reconstruction, dtype=np.float64))
+    reconstructed_details = np.vstack(detail_reconstructions)
+    detail_energy = np.square(reconstructed_details)
+    if not np.isfinite(reconstructed_details).all() or not np.isfinite(detail_energy).all():
+        raise ValueError("Discrete wavelet calculation produced non-finite detail values.")
+    bands = tuple(
+        (sampling_rate / (2.0 ** (detail_level + 1)), sampling_rate / (2.0 ** detail_level))
+        for detail_level in detail_levels
+    )
+    return DiscreteWaveletResult(
+        time_seconds=np.arange(values.size, dtype=np.float64) / sampling_rate,
+        wavelet=discrete_wavelet.name,
+        level=level,
+        detail_levels=detail_levels,
+        approximate_frequency_bands_hz=bands,
+        detail_coefficients=tuple(detail_coefficients),
+        detail_reconstructions=reconstructed_details,
+        detail_energy=detail_energy,
+    )
+
+
 def _discrete_teager_kaiser_energy(values: NDArray[np.float64]) -> NDArray[np.float64]:
     with np.errstate(over="ignore", invalid="ignore"):
         return np.square(values[1:-1]) - values[:-2] * values[2:]
@@ -507,8 +695,8 @@ def _values_and_sampling_rate(
     )
     if resolved_sampling_rate is None:
         raise ValueError("sampling_rate_hz is required for raw signal arrays.")
-    if resolved_sampling_rate <= 0:
-        raise ValueError("sampling_rate_hz must be positive.")
+    if not np.isfinite(resolved_sampling_rate) or resolved_sampling_rate <= 0:
+        raise ValueError("sampling_rate_hz must be positive and finite.")
     return values, float(resolved_sampling_rate)
 
 
@@ -518,12 +706,12 @@ def _window_and_overlap_samples(
     sampling_rate_hz: float,
     n_samples: int,
 ) -> tuple[int, int]:
-    if window_seconds <= 0:
-        raise ValueError("window_seconds must be positive.")
+    if not np.isfinite(window_seconds) or window_seconds <= 0:
+        raise ValueError("window_seconds must be positive and finite.")
     if step_seconds is None:
         step_seconds = window_seconds / 2.0
-    if step_seconds <= 0:
-        raise ValueError("step_seconds must be positive.")
+    if not np.isfinite(step_seconds) or step_seconds <= 0:
+        raise ValueError("step_seconds must be positive and finite.")
     if step_seconds > window_seconds:
         raise ValueError("step_seconds must not exceed window_seconds.")
     nperseg = max(1, int(round(window_seconds * sampling_rate_hz)))

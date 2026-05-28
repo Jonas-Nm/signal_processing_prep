@@ -11,10 +11,10 @@ from signal_processing_prep.records import SignalRecord
 
 
 def _time_axis(duration_seconds: float, sampling_rate_hz: float) -> NDArray[np.float64]:
-    if duration_seconds <= 0:
-        raise ValueError("duration_seconds must be positive.")
-    if sampling_rate_hz <= 0:
-        raise ValueError("sampling_rate_hz must be positive.")
+    if not np.isfinite(duration_seconds) or duration_seconds <= 0:
+        raise ValueError("duration_seconds must be positive and finite.")
+    if not np.isfinite(sampling_rate_hz) or sampling_rate_hz <= 0:
+        raise ValueError("sampling_rate_hz must be positive and finite.")
 
     n_samples = int(round(duration_seconds * sampling_rate_hz))
     if n_samples <= 0:
@@ -199,6 +199,98 @@ def transient_burst(
             "burst_start_seconds": burst_start_seconds,
             "burst_duration_seconds": burst_duration_seconds,
             "amplitude": amplitude,
+        },
+    )
+
+
+def damped_resonant_impact_train(
+    *,
+    duration_seconds: float = 2.0,
+    sampling_rate_hz: float = 12800.0,
+    impact_rate_hz: float = 5.0,
+    first_impact_seconds: float = 0.2,
+    resonance_frequency_hz: float = 2400.0,
+    ringdown_duration_seconds: float = 0.025,
+    decay_time_constant_seconds: float = 0.004,
+    impact_amplitude: float = 1.0,
+    background_frequency_hz: float | None = 30.0,
+    background_amplitude: float = 0.05,
+    noise_std: float = 0.02,
+    seed: int | None = 0,
+    label: str | None = "damped_resonant_impacts",
+    name: str | None = "damped_resonant_impact_train",
+) -> SignalRecord:
+    """Generate bearing-like impacts followed by decaying resonant ring-downs.
+
+    Each configured impact excites a cosine ring-down so its onset is visible
+    at the impact sample. Optional low-frequency background vibration and
+    seeded Gaussian noise provide a controlled monitoring-like context.
+    """
+    time = _time_axis(duration_seconds, sampling_rate_hz)
+    if not np.isfinite(impact_rate_hz) or impact_rate_hz <= 0:
+        raise ValueError("impact_rate_hz must be positive and finite.")
+    if not np.isfinite(first_impact_seconds) or first_impact_seconds < 0:
+        raise ValueError("first_impact_seconds must be non-negative and finite.")
+    if (
+        not np.isfinite(resonance_frequency_hz)
+        or resonance_frequency_hz <= 0
+        or resonance_frequency_hz >= sampling_rate_hz / 2.0
+    ):
+        raise ValueError("resonance_frequency_hz must be positive and below Nyquist.")
+    if not np.isfinite(ringdown_duration_seconds) or ringdown_duration_seconds <= 0:
+        raise ValueError("ringdown_duration_seconds must be positive and finite.")
+    if not np.isfinite(decay_time_constant_seconds) or decay_time_constant_seconds <= 0:
+        raise ValueError("decay_time_constant_seconds must be positive and finite.")
+    if not np.isfinite(impact_amplitude) or impact_amplitude < 0:
+        raise ValueError("impact_amplitude must be non-negative and finite.")
+    if not np.isfinite(background_amplitude) or background_amplitude < 0:
+        raise ValueError("background_amplitude must be non-negative and finite.")
+    if background_frequency_hz is not None and (
+        not np.isfinite(background_frequency_hz)
+        or background_frequency_hz <= 0
+        or background_frequency_hz >= sampling_rate_hz / 2.0
+    ):
+        raise ValueError("background_frequency_hz must be positive and below Nyquist or None.")
+    if not np.isfinite(noise_std) or noise_std < 0:
+        raise ValueError("noise_std must be non-negative and finite.")
+
+    if first_impact_seconds >= duration_seconds:
+        raise ValueError("first_impact_seconds must fall within duration_seconds.")
+    impact_period_seconds = 1.0 / impact_rate_hz
+    impact_times = np.arange(
+        first_impact_seconds,
+        duration_seconds,
+        impact_period_seconds,
+        dtype=np.float64,
+    )
+    values = np.zeros_like(time)
+    if background_frequency_hz is not None and background_amplitude > 0:
+        values += background_amplitude * np.sin(2.0 * np.pi * background_frequency_hz * time)
+    for impact_time_seconds in impact_times:
+        relative_time = time - impact_time_seconds
+        active = (relative_time >= 0.0) & (relative_time < ringdown_duration_seconds)
+        values[active] += impact_amplitude * np.exp(
+            -relative_time[active] / decay_time_constant_seconds
+        ) * np.cos(2.0 * np.pi * resonance_frequency_hz * relative_time[active])
+    if noise_std > 0:
+        values += np.random.default_rng(seed).normal(0.0, noise_std, size=time.size)
+
+    return SignalRecord(
+        values,
+        sampling_rate_hz,
+        label=label,
+        name=name,
+        attributes={
+            "impact_rate_hz": impact_rate_hz,
+            "impact_times_seconds": tuple(float(value) for value in impact_times),
+            "resonance_frequency_hz": resonance_frequency_hz,
+            "ringdown_duration_seconds": ringdown_duration_seconds,
+            "decay_time_constant_seconds": decay_time_constant_seconds,
+            "impact_amplitude": impact_amplitude,
+            "background_frequency_hz": background_frequency_hz,
+            "background_amplitude": background_amplitude,
+            "noise_std": noise_std,
+            "seed": seed,
         },
     )
 

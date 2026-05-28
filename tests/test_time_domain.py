@@ -1,5 +1,7 @@
 """Tests for time-domain signal metrics."""
 
+from collections.abc import Callable
+
 import numpy as np
 import pytest
 
@@ -69,3 +71,29 @@ def test_time_domain_helpers_handle_tiny_signals() -> None:
     assert zero_crossing_rate(values) == 0.0
     assert skewness(values) == 0.0
     assert kurtosis(values) == 0.0
+
+
+@pytest.mark.parametrize(
+    "metric",
+    [rms, crest_factor, skewness, kurtosis, zero_crossing_rate],
+)
+def test_time_domain_helpers_reject_nonfinite_samples(
+    metric: Callable[[np.ndarray], float],
+) -> None:
+    """Time-domain metrics fail clearly for NaN or Inf samples."""
+    values = np.array([0.0, np.nan, 1.0])
+
+    with pytest.raises(ValueError, match="non-finite samples"):
+        metric(values)
+
+    values = np.array([0.0, np.inf, 1.0])
+
+    with pytest.raises(ValueError, match="non-finite samples"):
+        metric(values)
+
+
+@pytest.mark.parametrize("sampling_rate_hz", [np.nan, np.inf])
+def test_zero_crossing_rate_rejects_nonfinite_sampling_rate(sampling_rate_hz: float) -> None:
+    """Zero-crossing rates with physical units require finite timing."""
+    with pytest.raises(ValueError, match="sampling_rate_hz must be positive and finite"):
+        zero_crossing_rate(np.array([-1.0, 1.0]), sampling_rate_hz=sampling_rate_hz)

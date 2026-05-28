@@ -15,6 +15,7 @@ from signal_processing_prep.frequency_domain import fft_magnitude, psd
 from signal_processing_prep.records import SignalRecord
 from signal_processing_prep.time_frequency import (
     HilbertHuangResult,
+    SpectralKurtosisResult,
     morlet_wavelet_scalogram,
     spectrogram_analysis,
     teager_kaiser_demodulation,
@@ -147,6 +148,44 @@ def plot_spectrogram(
         "Power [dB]",
         "spectrogram",
     )
+    fig.tight_layout()
+    if show:
+        plt.show()
+    return fig, ax
+
+
+def plot_spectral_kurtosis(
+    result: SpectralKurtosisResult,
+    *,
+    ax: Axes | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot a previously calculated spectral-kurtosis frequency curve."""
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 4))
+    else:
+        fig = ax.figure
+    ax.plot(
+        result.frequencies_hz[result.valid_mask],
+        result.excess_kurtosis[result.valid_mask],
+        linewidth=1.0,
+        label="Excess spectral kurtosis",
+    )
+    ax.axhline(0.0, color="0.4", linestyle="--", linewidth=0.9, label="Stationary baseline")
+    if np.isfinite(result.peak_frequency_hz) and np.isfinite(result.peak_excess_kurtosis):
+        ax.plot(
+            result.peak_frequency_hz,
+            result.peak_excess_kurtosis,
+            marker="o",
+            linestyle="none",
+            color="tab:red",
+            label=f"Peak: {result.peak_frequency_hz:.1f} Hz",
+        )
+    ax.set_title("Spectral kurtosis - intermittent energy by frequency")
+    ax.set_xlabel("Frequency [Hz]")
+    ax.set_ylabel("Excess spectral kurtosis")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best")
     fig.tight_layout()
     if show:
         plt.show()

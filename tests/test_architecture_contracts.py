@@ -77,6 +77,14 @@ def test_dsp_foundations_notebook_includes_aliasing_and_finished_envelope_lesson
     assert "Hilbert-Huang Transform: Adaptive Modes" in source
     assert "hilbert_huang_transform" in source
     assert "plot_hilbert_huang_spectrum" in source
+    assert "Spectral Kurtosis: Selecting An Intermittent Frequency Band" in source
+    assert "spectral_kurtosis" in source
+    assert "plot_spectral_kurtosis" in source
+    assert "Discrete Wavelet Transform: Compact Impact Detection Across Scales" in source
+    assert "damped_resonant_impact_train" in source
+    assert "discrete_wavelet_analysis" in source
+    assert "CWT is a dense visualization" in source
+    assert "DWT gives a compact" in source
     assert "TODO: being able to create the am record" not in source
 
 
@@ -84,14 +92,24 @@ def test_single_record_walkthrough_reveals_truth_only_after_candidate_analysis()
     source = _notebook_source("notebooks/01_signal_analysis_walkthrough_v2.ipynb")
 
     assert "group_candidate_regions" in source
+    assert "full_record_spectral_kurtosis" in source
+    assert "spectral_kurtosis_max_excess" in source
     assert "Truth Reveal For Synthetic Validation Only" in source
     assert source.index("group_candidate_regions") < source.index("VIBRATION_ANOMALY_START_SECONDS")
+    assert source.index("full_record_spectral_kurtosis") < source.index(
+        "VIBRATION_ANOMALY_START_SECONDS"
+    )
 
 
 def test_detector_walkthrough_uses_shared_features_before_truth_reveal() -> None:
     source = _notebook_source("notebooks/03_feature_based_anomaly_detection_walkthrough.ipynb")
 
     assert "comparison_feature_table = FeatureTable.from_dataframe" in source
+    assert "full_record_spectral_kurtosis" in source
+    assert 'selected_feature_columns = ("rms", "kurtosis")' in source
     assert ".score(comparison_feature_table)" in source
     assert "consensus_candidate_regions" in source
     assert source.index("comparison_feature_table") < source.index("VIBRATION_ANOMALY_START_SECONDS")
+    assert source.index("full_record_spectral_kurtosis") < source.index(
+        "VIBRATION_ANOMALY_START_SECONDS"
+    )
